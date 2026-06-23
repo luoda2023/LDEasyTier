@@ -1,5 +1,5 @@
-#ifndef QTETPUSHBTN_H
-#define QTETPUSHBTN_H
+#ifndef LDETPUSHBTN_H
+#define LDETPUSHBTN_H
 
 #include <QPushButton>
 #include <QPropertyAnimation>

@@ -48,38 +48,38 @@
       </size>
      </property>
      <property name="styleSheet">
-      <string notr="true">/* 按钮基础样式：默认全透明、无边框、无焦点（无任何选中效果） */
+      <string notr="true">/* Flat design: minimal borders, clean fills, no heavy shadows */
 QPushButton {
     min-width: 42px;
     max-width: 42px;
     min-height: 42px;
     max-height: 42px;
-    border-radius: 8px;
-    background-color: transparent;  /* 全透明背景 */
+    border-radius: 10px;
+    background-color: transparent;
     color: #000000;
     font-size: 24px;
     text-align: center;
-    border: none;               /* 【核心】默认无边框 */
+    border: none;
     padding: 0;
-    outline: none;              /* 【核心】禁用系统自动焦点框 */
+    outline: none;
 }
 
-/* 1. 鼠标悬停：显示基础边框（最浅） */
+/* Flat hover: subtle background fill instead of heavy outline */
 QPushButton:hover {
-    border: 2px solid #66ccff;
+    background-color: rgba(102, 204, 255, 0.12);
 }
 
-/* 3. 鼠标按下：显示最深边框（颜色最深，符合要求）+ 文字位移 */
+/* Flat pressed: stronger flat fill, no border emphasis */
 QPushButton:pressed {
-    border: 2px solid #3399dd;  /* 【核心】按下时边框颜色最深 */
+    background-color: rgba(51, 153, 221, 0.18);
     padding-left: 2px;
     padding-top: 2px;
 }
 
-/* 禁用状态：无边框、半透明效果 */
+/* Flat disabled: simple muted tone */
 QPushButton:disabled {
-    background-color: rgba(179, 217, 255, 0.3);
-    color: #e6e6e6;
+    background-color: rgba(0, 0, 0, 0.06);
+    color: #b0b0b0;
     border: none;
 }</string>
      </property>

@@ -1,5 +1,5 @@
-#ifndef QTETTHEME_H
-#define QTETTHEME_H
+#ifndef LDETTHEME_H
+#define LDETTHEME_H
 
 #include <QColor>
 #include <QObject>
@@ -56,4 +56,4 @@ private:
     explicit LDETTheme(QObject *parent = nullptr);
 };
 
-#endif // QTETTHEME_H
+#endif // LDETTHEME_H

@@ -129,11 +129,11 @@ void LDETPushBtn::paintEvent(QPaintEvent *event)
         borderColor = LDETDrawUtils::blendColors(m_normalBorderColor, m_highlightBorderColor, m_borderOpacity);
     }
 
-    LDETDrawUtils::drawRoundedRect(&painter, borderRect, BORDER_RADIUS, bgColor, borderColor, BORDER_WIDTH);
+    LDETDrawUtils::drawRoundedRect(&painter, borderRect, BORDER_RADIUS, bgColor, borderColor, 1);
 
     if (m_isPressed && isEnabled()) {
         QColor pressedOverlay = LDETTheme::AccentColor;
-        pressedOverlay.setAlphaF(0.3);
+        pressedOverlay.setAlphaF(0.12);
         QPainterPath overlayPath;
         overlayPath.addRoundedRect(borderRect, BORDER_RADIUS, BORDER_RADIUS);
         painter.fillPath(overlayPath, pressedOverlay);
