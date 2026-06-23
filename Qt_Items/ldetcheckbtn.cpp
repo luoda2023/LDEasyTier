@@ -244,7 +244,7 @@ void LDETCheckBtn::paintEvent(QPaintEvent *event)
 
         QColor borderColor = LDETDrawUtils::blendColors(normalBorder, highlightBorder, m_borderOpacity);
 
-        LDETDrawUtils::drawRoundedRect(&painter, borderRect, 5, bgColor, borderColor, 1);
+        LDETDrawUtils::drawRoundedRect(&painter, borderRect, 6, bgColor, borderColor, 1);
     }
 
     QRect switchRect = calculateSwitchRect();

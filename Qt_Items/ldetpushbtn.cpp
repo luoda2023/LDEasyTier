@@ -133,7 +133,7 @@ void LDETPushBtn::paintEvent(QPaintEvent *event)
 
     if (m_isPressed && isEnabled()) {
         QColor pressedOverlay = LDETTheme::AccentColor;
-        pressedOverlay.setAlphaF(0.12);
+        pressedOverlay.setAlphaF(0.10);
         QPainterPath overlayPath;
         overlayPath.addRoundedRect(borderRect, BORDER_RADIUS, BORDER_RADIUS);
         painter.fillPath(overlayPath, pressedOverlay);

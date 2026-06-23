@@ -290,12 +290,10 @@ void LDETTabBar::paintEvent(QPaintEvent *event)
             m_isInitialShow = false;
         }
 
-        qreal indicatorHeight = INDICATOR_HEIGHT;
-        qreal indicatorY = TAB_HEIGHT - indicatorHeight;
-        qreal actualWidth = m_indicatorWidth * 0.7;
-        qreal actualX = m_indicatorX + (m_indicatorWidth - actualWidth) / 2;
-
-        LDETDrawUtils::drawBottomIndicator(&painter, actualX, indicatorY, actualWidth, indicatorHeight, m_indicatorColor);
+        QRect currentRect = calculateTabRect(currentIndex());
+        QPainterPath selectedBg;
+        selectedBg.addRoundedRect(currentRect.adjusted(2, 2, -2, -2), BORDER_RADIUS, BORDER_RADIUS);
+        painter.fillPath(selectedBg, m_selectedBackgroundColor);
     }
 }
 
