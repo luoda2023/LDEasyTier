@@ -18,7 +18,7 @@
 
 ## 环境信息
 - 操作系统: [如 Windows 10/11, Linux 发行版]
-- QtEasyTier 版本: [如 1.4.1]
+- LDEasyTier 版本: [如 1.4.1]
 - EasyTier Core 版本: [可通过 `easytier-core -V` 获取]
 
 ## 日志信息
