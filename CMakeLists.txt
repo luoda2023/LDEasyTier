@@ -150,8 +150,12 @@ target_compile_definitions(${ProjectName} PRIVATE
 target_link_libraries(${ProjectName} PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::Svg)
 
 # 链接EasyTier Ffi 库
-# 使用完整路径，避免 MinGW 在 link_directories 下找不到 .dll.lib
-target_link_libraries(${ProjectName} PRIVATE "${CMAKE_SOURCE_DIR}/ThirdParty/EasyTier/library/easytier_ffi.dll.lib")
+# Windows 用完整路径避免 MinGW 找不到 .dll.lib；其他平台沿用 link_directories()
+if(WIN32)
+    target_link_libraries(${ProjectName} PRIVATE "${CMAKE_SOURCE_DIR}/ThirdParty/EasyTier/library/easytier_ffi.dll.lib")
+else()
+    target_link_libraries(${ProjectName} PRIVATE easytier_ffi)
+endif()
 
 if(APPLE)
     # 统一使用@rpath查找FFI动态库，避免构建机绝对路径被写入二进制
