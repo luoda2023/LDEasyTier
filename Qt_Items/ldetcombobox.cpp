@@ -304,7 +304,7 @@ void LDETComboBox::paintEvent(QPaintEvent *event)
         borderColor = LDETDrawUtils::blendColors(m_normalBorderColor, m_highlightBorderColor, m_borderOpacity);
     }
 
-    LDETDrawUtils::drawRoundedRect(&painter, borderRect, BORDER_RADIUS, bgColor, borderColor, BORDER_WIDTH);
+    LDETDrawUtils::drawRoundedRect(&painter, borderRect, BORDER_RADIUS, bgColor, borderColor, 1);
 
     if ((m_isPressed || (m_popup && m_popup->isVisible())) && isEnabled()) {
         QColor pressedOverlay = LDETTheme::AccentColor;

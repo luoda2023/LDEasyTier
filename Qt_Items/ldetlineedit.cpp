@@ -175,7 +175,7 @@ void LDETLineEdit::paintEvent(QPaintEvent *event)
         borderColor = LDETDrawUtils::blendColors(m_normalBorderColor, m_highlightBorderColor, m_borderOpacity);
     }
 
-    LDETDrawUtils::drawRoundedRect(&painter, borderRect, BORDER_RADIUS, bgColor, borderColor, BORDER_WIDTH);
+    LDETDrawUtils::drawRoundedRect(&painter, borderRect, BORDER_RADIUS, bgColor, borderColor, 1);
 
     LDETDrawUtils::safeEndPainter(&painter);
 

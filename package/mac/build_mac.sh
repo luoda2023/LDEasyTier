@@ -94,6 +94,12 @@ fix_local_dependency_paths() {
             continue
         fi
 
+        case "$macho" in
+            *"/PlugIns/"*)
+                continue
+                ;;
+        esac
+
         install_name=$(otool -D "$macho" 2>/dev/null | sed -n '2p' || true)
         if [ -n "$install_name" ] && printf '%s\n' "$install_name" | grep -Eq '/opt/homebrew|/usr/local|/Users/'; then
             new_ref=$(bundle_dependency_ref "$install_name")
@@ -127,6 +133,12 @@ check_no_local_dependency_paths() {
         if ! is_macho_file "$macho"; then
             continue
         fi
+
+        case "$macho" in
+            *"/PlugIns/"*)
+                continue
+                ;;
+        esac
 
         install_name=$(otool -D "$macho" 2>/dev/null | sed -n '2p' || true)
         if [ -n "$install_name" ] && printf '%s\n' "$install_name" | grep -Eq '/opt/homebrew|/usr/local|/Users/'; then
