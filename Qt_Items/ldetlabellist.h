@@ -1,0 +1,126 @@
+#ifndef QTETLABELLIST_H
+#define QTETLABELLIST_H
+
+#include <QWidget>
+#include <QListWidgetItem>
+#include <QPropertyAnimation>
+#include <QIcon>
+#include <QList>
+
+class LDETLabelListItem
+{
+public:
+    explicit LDETLabelListItem();
+    explicit LDETLabelListItem(const QString &text);
+    explicit LDETLabelListItem(const QIcon &icon, const QString &text);
+    ~LDETLabelListItem() = default;
+
+    [[nodiscard]] QString text() const { return m_text; }
+    void setText(const QString &text) { m_text = text; }
+
+    [[nodiscard]] QIcon icon() const { return m_icon; }
+    void setIcon(const QIcon &icon) { m_icon = icon; }
+
+    [[nodiscard]] QVariant data(int role) const;
+    void setData(int role, const QVariant &value);
+
+private:
+    QString m_text;
+    QIcon m_icon;
+    QMap<int, QVariant> m_data;
+};
+
+class LDETLabelList : public QWidget
+{
+    Q_OBJECT
+    Q_PROPERTY(qreal hoverOpacity READ hoverOpacity WRITE setHoverOpacity)
+    Q_PROPERTY(qreal selectionOpacity READ selectionOpacity WRITE setSelectionOpacity)
+    Q_PROPERTY(int scrollOffset READ scrollOffset WRITE setScrollOffset)
+
+public:
+    explicit LDETLabelList(QWidget *parent = nullptr);
+    ~LDETLabelList() override;
+
+    void addItem(LDETLabelListItem *item);
+    void addItem(const QString &text);
+    [[nodiscard]] int count() const;
+    [[nodiscard]] LDETLabelListItem* item(int index) const;
+    [[nodiscard]] LDETLabelListItem* currentItem() const;
+    [[nodiscard]] int currentRow() const;
+    void setCurrentRow(int row);
+    [[nodiscard]] int row(LDETLabelListItem *item) const;
+    void clear();
+    LDETLabelListItem* takeItem(int row);
+    [[nodiscard]] QRect visualItemRect(LDETLabelListItem *item) const;
+    [[nodiscard]] LDETLabelListItem* itemAt(const QPoint &pos) const;
+    void setItemIcon(int index, const QIcon &icon);
+
+    [[nodiscard]] qreal hoverOpacity() const;
+    void setHoverOpacity(qreal opacity);
+    [[nodiscard]] qreal selectionOpacity() const;
+    void setSelectionOpacity(qreal opacity);
+    void setHighlightColor(const QColor &color);
+    [[nodiscard]] QColor highlightColor() const;
+    [[nodiscard]] int scrollOffset() const;
+    void setScrollOffset(int offset);
+
+signals:
+    void currentRowChanged(int currentRow);
+    void itemClicked(LDETLabelListItem *item);
+    void itemDoubleClicked(LDETLabelListItem *item);
+    void itemSelectionChanged();
+
+protected:
+    void paintEvent(QPaintEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseDoubleClickEvent(QMouseEvent *event) override;
+    void leaveEvent(QEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+    void wheelEvent(QWheelEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
+
+private:
+    void init();
+    void updateColorScheme();
+    [[nodiscard]] QRect calculateItemRect(int row) const;
+    [[nodiscard]] int getRowAtPosition(const QPoint &pos) const;
+    void updateContentHeight();
+    [[nodiscard]] QRect scrollbarTrackRect() const;
+    [[nodiscard]] QRect scrollbarHandleRect() const;
+    void drawScrollbar(QPainter &painter);
+
+private:
+    QList<LDETLabelListItem*> m_items;
+    QPropertyAnimation *m_hoverAnimation = nullptr;
+    QPropertyAnimation *m_selectionAnimation = nullptr;
+    QPropertyAnimation *m_scrollAnimation = nullptr;
+    qreal m_hoverOpacity = 0.0;
+    qreal m_selectionOpacity = 0.0;
+    int m_hoveredRow = -1;
+    int m_selectedRow = -1;
+    int m_scrollOffset = 0;
+    bool m_scrollbarHovered = false;
+    bool m_scrollbarDragging = false;
+    int m_dragAnchor = 0;
+    int m_dragAnchorOffset = 0;
+    QColor m_highlightColor;
+    QColor m_hoverFillColor;
+    QColor m_textColor;
+    QColor m_bgColor;
+
+    static constexpr int ANIMATION_DURATION = 200;
+    static constexpr int BORDER_RADIUS = 6;
+    static constexpr int ITEM_MARGIN = 4;
+    static constexpr int ITEM_HEIGHT = 36;
+    static constexpr int ICON_SIZE = 18;
+    static constexpr int TEXT_SIZE = 12;
+    static constexpr int ICON_TEXT_SPACING = 8;
+
+    static constexpr int SCROLLBAR_WIDTH = 6;
+    static constexpr int SCROLLBAR_MIN_HANDLE = 30;
+    static constexpr int SCROLLBAR_MARGIN = 2;
+};
+
+#endif // QTETLABELLIST_H

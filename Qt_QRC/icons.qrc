@@ -1,0 +1,30 @@
+<RCC>
+    <qresource prefix="/icons">
+        <file>add.svg</file>
+        <file>delete.svg</file>
+        <file>edit.svg</file>
+        <file>export.svg</file>
+        <file>import.svg</file>
+        <file>home.svg</file>
+        <file>plus.svg</file>
+        <file>settings.svg</file>
+        <file>about.svg</file>
+        <file>git.svg</file>
+        <file>eye.svg</file>
+        <file>server.svg</file>
+        <file>net.svg</file>
+        <file>eye-slash.svg</file>
+        <file>net-page.svg</file>
+        <file>icon.ico</file>
+        <file>network.svg</file>
+        <file>network-running.svg</file>
+        <file>one-click.svg</file>
+        <file>alipay.png</file>
+        <file>wechat.png</file>
+        <file>Ubuntu-B.ttf</file>
+        <file>UbuntuMono-B.ttf</file>
+        <file>YeGenyou.ttf</file>
+        <file>icon.icns</file>
+        <file>icon.png</file>
+    </qresource>
+</RCC>

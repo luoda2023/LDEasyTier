@@ -1,0 +1,634 @@
+#include "ldetlabellist.h"
+#include "ldettheme.h"
+#include "ldetdrawutils.h"
+
+#include <QPainter>
+#include <QPainterPath>
+#include <QApplication>
+#include <QStyleHints>
+#include <QMouseEvent>
+#include <QWheelEvent>
+#include <QFontMetrics>
+#include <QKeyEvent>
+
+LDETLabelListItem::LDETLabelListItem()
+{
+}
+
+LDETLabelListItem::LDETLabelListItem(const QString &text)
+    : m_text(text)
+{
+}
+
+LDETLabelListItem::LDETLabelListItem(const QIcon &icon, const QString &text)
+    : m_text(text)
+    , m_icon(icon)
+{
+}
+
+QVariant LDETLabelListItem::data(int role) const
+{
+    return m_data.value(role);
+}
+
+void LDETLabelListItem::setData(int role, const QVariant &value)
+{
+    m_data[role] = value;
+}
+
+LDETLabelList::LDETLabelList(QWidget *parent)
+    : QWidget(parent)
+    , m_highlightColor(LDETTheme::AccentColor)
+{
+    init();
+}
+
+LDETLabelList::~LDETLabelList()
+{
+    if (m_hoverAnimation) {
+        m_hoverAnimation->stop();
+    }
+    if (m_selectionAnimation) {
+        m_selectionAnimation->stop();
+    }
+    if (m_scrollAnimation) {
+        m_scrollAnimation->stop();
+    }
+
+    qDeleteAll(m_items);
+    m_items.clear();
+}
+
+void LDETLabelList::init()
+{
+    setAttribute(Qt::WA_TranslucentBackground, true);
+    setMouseTracking(true);
+    setFocusPolicy(Qt::StrongFocus);
+    setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+
+    m_hoverFillColor = LDETTheme::instance()->hoverFillColor(m_highlightColor);
+
+    m_hoverAnimation = new QPropertyAnimation(this, "hoverOpacity", this);
+    m_hoverAnimation->setDuration(ANIMATION_DURATION);
+    m_hoverAnimation->setEasingCurve(QEasingCurve::OutCubic);
+
+    m_selectionAnimation = new QPropertyAnimation(this, "selectionOpacity", this);
+    m_selectionAnimation->setDuration(ANIMATION_DURATION);
+    m_selectionAnimation->setEasingCurve(QEasingCurve::OutCubic);
+
+    m_scrollAnimation = new QPropertyAnimation(this, "scrollOffset", this);
+    m_scrollAnimation->setDuration(ANIMATION_DURATION);
+    m_scrollAnimation->setEasingCurve(QEasingCurve::OutCubic);
+
+    updateColorScheme();
+
+    connect(qApp->styleHints(), &QStyleHints::colorSchemeChanged, this, [this]() {
+        updateColorScheme();
+        update();
+    });
+}
+
+void LDETLabelList::updateColorScheme()
+{
+    auto *theme = LDETTheme::instance();
+    m_textColor = theme->textColor();
+    m_bgColor = Qt::transparent;
+    m_hoverFillColor = theme->hoverFillColor(m_highlightColor);
+    update();
+}
+
+void LDETLabelList::addItem(LDETLabelListItem *item)
+{
+    m_items.append(item);
+    updateContentHeight();
+    update();
+}
+
+void LDETLabelList::addItem(const QString &text)
+{
+    addItem(new LDETLabelListItem(text));
+}
+
+int LDETLabelList::count() const
+{
+    return static_cast<int>(m_items.size());
+}
+
+LDETLabelListItem* LDETLabelList::item(int index) const
+{
+    if (index >= 0 && index < static_cast<int>(m_items.size())) {
+        return m_items[index];
+    }
+    return nullptr;
+}
+
+LDETLabelListItem* LDETLabelList::currentItem() const
+{
+    return item(m_selectedRow);
+}
+
+int LDETLabelList::currentRow() const
+{
+    return m_selectedRow;
+}
+
+int LDETLabelList::row(LDETLabelListItem *item) const
+{
+    for (int i = 0; i < static_cast<int>(m_items.size()); ++i) {
+        if (m_items[i] == item) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void LDETLabelList::setCurrentRow(int row)
+{
+    if (row >= -1 && row < static_cast<int>(m_items.size()) && row != m_selectedRow) {
+        int oldRow = m_selectedRow;
+        m_selectedRow = row;
+
+        m_selectionAnimation->stop();
+        m_selectionAnimation->setStartValue(m_selectionOpacity);
+        m_selectionAnimation->setEndValue(row >= 0 ? 1.0 : 0.0);
+        m_selectionAnimation->start();
+
+        update();
+
+        if (oldRow != row) {
+            emit currentRowChanged(row);
+            emit itemSelectionChanged();
+        }
+    }
+}
+
+void LDETLabelList::clear()
+{
+    qDeleteAll(m_items);
+    m_items.clear();
+    m_selectedRow = -1;
+    m_hoveredRow = -1;
+    m_scrollOffset = 0;
+    updateContentHeight();
+    update();
+}
+
+LDETLabelListItem* LDETLabelList::takeItem(int row)
+{
+    if (row >= 0 && row < static_cast<int>(m_items.size())) {
+        LDETLabelListItem *item = m_items.takeAt(row);
+        if (m_selectedRow == row) {
+            m_selectedRow = -1;
+        } else if (m_selectedRow > row) {
+            m_selectedRow--;
+        }
+        if (m_hoveredRow == row) {
+            m_hoveredRow = -1;
+        } else if (m_hoveredRow > row) {
+            m_hoveredRow--;
+        }
+        updateContentHeight();
+        update();
+        return item;
+    }
+    return nullptr;
+}
+
+QRect LDETLabelList::visualItemRect(LDETLabelListItem *item) const
+{
+    if (!item) {
+        return QRect();
+    }
+    for (int i = 0; i < static_cast<int>(m_items.size()); ++i) {
+        if (m_items[i] == item) {
+            return calculateItemRect(i);
+        }
+    }
+    return QRect();
+}
+
+LDETLabelListItem* LDETLabelList::itemAt(const QPoint &pos) const
+{
+    int row = getRowAtPosition(pos);
+    if (row >= 0 && row < static_cast<int>(m_items.size())) {
+        return m_items[row];
+    }
+    return nullptr;
+}
+
+void LDETLabelList::setItemIcon(int index, const QIcon &icon)
+{
+    if (index >= 0 && index < static_cast<int>(m_items.size())) {
+        m_items[index]->setIcon(icon);
+        update();
+    }
+}
+
+qreal LDETLabelList::hoverOpacity() const { return m_hoverOpacity; }
+void LDETLabelList::setHoverOpacity(qreal opacity)
+{
+    if (!qFuzzyCompare(m_hoverOpacity, opacity)) {
+        m_hoverOpacity = qBound(0.0, opacity, 1.0);
+        update();
+    }
+}
+
+qreal LDETLabelList::selectionOpacity() const { return m_selectionOpacity; }
+void LDETLabelList::setSelectionOpacity(qreal opacity)
+{
+    if (!qFuzzyCompare(m_selectionOpacity, opacity)) {
+        m_selectionOpacity = qBound(0.0, opacity, 1.0);
+        update();
+    }
+}
+
+void LDETLabelList::setHighlightColor(const QColor &color)
+{
+    m_highlightColor = color;
+    m_hoverFillColor = LDETTheme::instance()->hoverFillColor(color);
+    update();
+}
+
+QColor LDETLabelList::highlightColor() const
+{
+    return m_highlightColor;
+}
+
+QRect LDETLabelList::calculateItemRect(int row) const
+{
+    if (row < 0 || row >= static_cast<int>(m_items.size())) {
+        return QRect();
+    }
+    int y = row * ITEM_HEIGHT - m_scrollOffset;
+    return QRect(0, y, width(), ITEM_HEIGHT);
+}
+
+int LDETLabelList::getRowAtPosition(const QPoint &pos) const
+{
+    int y = pos.y() + m_scrollOffset;
+    int row = y / ITEM_HEIGHT;
+    if (row >= 0 && row < static_cast<int>(m_items.size())) {
+        return row;
+    }
+    return -1;
+}
+
+void LDETLabelList::updateContentHeight()
+{
+    update();
+}
+
+int LDETLabelList::scrollOffset() const
+{
+    return m_scrollOffset;
+}
+
+void LDETLabelList::setScrollOffset(int offset)
+{
+    int totalHeight = static_cast<int>(m_items.size()) * ITEM_HEIGHT;
+    int visibleHeight = height();
+    int maxOffset = qMax(0, totalHeight - visibleHeight);
+    offset = qBound(0, offset, maxOffset);
+    if (m_scrollOffset != offset) {
+        m_scrollOffset = offset;
+        update();
+    }
+}
+
+QRect LDETLabelList::scrollbarTrackRect() const
+{
+    int totalHeight = static_cast<int>(m_items.size()) * ITEM_HEIGHT;
+    int visibleHeight = height();
+    if (visibleHeight <= 0 || totalHeight <= visibleHeight) {
+        return QRect();
+    }
+    int trackX = width() - SCROLLBAR_WIDTH - SCROLLBAR_MARGIN;
+    return QRect(trackX, SCROLLBAR_MARGIN, SCROLLBAR_WIDTH, visibleHeight - SCROLLBAR_MARGIN * 2);
+}
+
+QRect LDETLabelList::scrollbarHandleRect() const
+{
+    QRect track = scrollbarTrackRect();
+    if (track.isNull()) {
+        return QRect();
+    }
+    int totalHeight = static_cast<int>(m_items.size()) * ITEM_HEIGHT;
+    int visibleHeight = height();
+    double ratio = static_cast<double>(visibleHeight) / totalHeight;
+    int handleHeight = qMax(SCROLLBAR_MIN_HANDLE, static_cast<int>(track.height() * ratio));
+    int maxHandleY = track.height() - handleHeight;
+    double scrollRatio = (totalHeight > visibleHeight)
+                             ? static_cast<double>(m_scrollOffset) / (totalHeight - visibleHeight)
+                             : 0.0;
+    int handleY = track.top() + static_cast<int>(scrollRatio * maxHandleY);
+    return QRect(track.x(), handleY, track.width(), handleHeight);
+}
+
+void LDETLabelList::drawScrollbar(QPainter &painter)
+{
+    QRect track = scrollbarTrackRect();
+    if (track.isNull()) {
+        return;
+    }
+
+    QColor trackColor = m_textColor;
+    trackColor.setAlphaF(0.08);
+    QPainterPath trackPath;
+    trackPath.addRoundedRect(QRectF(track), SCROLLBAR_WIDTH / 2.0, SCROLLBAR_WIDTH / 2.0);
+    painter.fillPath(trackPath, trackColor);
+
+    QRect handle = scrollbarHandleRect();
+    QColor handleColor = m_textColor;
+    handleColor.setAlphaF(m_scrollbarHovered || m_scrollbarDragging ? 0.45 : 0.25);
+    QPainterPath handlePath;
+    handlePath.addRoundedRect(QRectF(handle), SCROLLBAR_WIDTH / 2.0, SCROLLBAR_WIDTH / 2.0);
+    painter.fillPath(handlePath, handleColor);
+}
+
+void LDETLabelList::paintEvent(QPaintEvent *event)
+{
+    Q_UNUSED(event)
+
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+
+    painter.fillRect(rect(), m_bgColor);
+
+    int firstVisibleRow = m_scrollOffset / ITEM_HEIGHT;
+    int lastVisibleRow = (m_scrollOffset + height() + ITEM_HEIGHT - 1) / ITEM_HEIGHT;
+    lastVisibleRow = qMin(lastVisibleRow, static_cast<int>(m_items.size()) - 1);
+
+    int totalHeight = static_cast<int>(m_items.size()) * ITEM_HEIGHT;
+    bool scrollbarVisible = (totalHeight > height());
+    int extraRightMargin = scrollbarVisible ? (SCROLLBAR_WIDTH + SCROLLBAR_MARGIN) : 0;
+
+    for (int row = firstVisibleRow; row <= lastVisibleRow; ++row) {
+        QRect itemRect = calculateItemRect(row);
+        LDETLabelListItem *itemData = m_items[row];
+
+        if (itemRect.bottom() < 0 || itemRect.top() > height()) {
+            continue;
+        }
+
+        painter.save();
+        painter.setClipRect(itemRect);
+
+        QRect drawRect = itemRect.adjusted(ITEM_MARGIN, ITEM_MARGIN / 2,
+                                            -(ITEM_MARGIN + extraRightMargin), -ITEM_MARGIN / 2);
+
+        bool isSelected = (row == m_selectedRow);
+        bool isHovered = (row == m_hoveredRow);
+
+        if (isSelected) {
+            QPainterPath path;
+            path.addRoundedRect(drawRect, BORDER_RADIUS, BORDER_RADIUS);
+            painter.fillPath(path, m_highlightColor);
+            painter.setPen(QPen(m_highlightColor, 1.5));
+            painter.drawPath(path);
+        } else if (isHovered) {
+            QPainterPath path;
+            path.addRoundedRect(drawRect, BORDER_RADIUS, BORDER_RADIUS);
+            painter.fillPath(path, m_hoverFillColor);
+            painter.setPen(QPen(m_highlightColor, 1.0));
+            painter.drawPath(path);
+        }
+
+        QIcon icon = itemData->icon();
+        if (!icon.isNull()) {
+            int iconY = drawRect.top() + (drawRect.height() - ICON_SIZE) / 2;
+            QRect iconRect(drawRect.left() + 8, iconY, ICON_SIZE, ICON_SIZE);
+            icon.paint(&painter, iconRect);
+        }
+
+        QString text = itemData->text();
+        if (!text.isEmpty()) {
+            QFont font = painter.font();
+            font.setPointSize(TEXT_SIZE);
+            painter.setFont(font);
+
+            QColor textColor = isSelected ? QColor(0, 0, 0) : m_textColor;
+            painter.setPen(textColor);
+
+            int textLeft = drawRect.left() + 8;
+            if (!icon.isNull()) {
+                textLeft += ICON_SIZE + ICON_TEXT_SPACING;
+            }
+
+            QRect textRect(textLeft, drawRect.top(),
+                           drawRect.right() - textLeft - 8, drawRect.height());
+            painter.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, text);
+        }
+
+        painter.restore();
+    }
+
+    drawScrollbar(painter);
+
+    if (m_items.isEmpty()) {
+        QFont font = painter.font();
+        font.setPointSize(14);
+        painter.setFont(font);
+
+        QColor textColor = m_textColor;
+        textColor.setAlphaF(0.4);
+        painter.setPen(textColor);
+        painter.drawText(rect(), Qt::AlignCenter, tr("空空如也"));
+    }
+}
+
+void LDETLabelList::mouseMoveEvent(QMouseEvent *event)
+{
+    if (m_scrollbarDragging) {
+        QRect track = scrollbarTrackRect();
+        QRect handle = scrollbarHandleRect();
+        int totalHeight = static_cast<int>(m_items.size()) * ITEM_HEIGHT;
+        int visibleHeight = height();
+        if (!track.isNull() && track.height() > handle.height() && totalHeight > visibleHeight) {
+            int deltaY = event->pos().y() - m_dragAnchor;
+            double ratio = static_cast<double>(deltaY) / (track.height() - handle.height());
+            int newOffset = m_dragAnchorOffset + static_cast<int>(ratio * (totalHeight - visibleHeight));
+            newOffset = qBound(0, newOffset, totalHeight - visibleHeight);
+            if (newOffset != m_scrollOffset) {
+                m_scrollOffset = newOffset;
+                update();
+            }
+        }
+        return;
+    }
+
+    int newHoveredRow = getRowAtPosition(event->pos());
+
+    if (newHoveredRow != m_hoveredRow) {
+        m_hoveredRow = newHoveredRow;
+        update();
+    }
+
+    bool inScrollbar = scrollbarTrackRect().contains(event->pos());
+    if (inScrollbar != m_scrollbarHovered) {
+        m_scrollbarHovered = inScrollbar;
+        update();
+    }
+
+    QWidget::mouseMoveEvent(event);
+}
+
+void LDETLabelList::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton) {
+        QRect track = scrollbarTrackRect();
+        if (!track.isNull() && track.contains(event->pos())) {
+            QRect handle = scrollbarHandleRect();
+            int totalHeight = static_cast<int>(m_items.size()) * ITEM_HEIGHT;
+            int visibleHeight = height();
+            if (visibleHeight > 0 && totalHeight > visibleHeight) {
+                if (handle.contains(event->pos())) {
+                    m_scrollbarDragging = true;
+                    m_dragAnchor = event->pos().y();
+                    m_dragAnchorOffset = m_scrollOffset;
+                    if (m_scrollAnimation->state() == QAbstractAnimation::Running) {
+                        m_scrollAnimation->stop();
+                    }
+                } else if (track.height() > handle.height()) {
+                    double ratio = static_cast<double>(event->pos().y() - track.top() - handle.height() / 2)
+                                   / (track.height() - handle.height());
+                    ratio = qBound(0.0, ratio, 1.0);
+                    int targetOffset = static_cast<int>(ratio * (totalHeight - visibleHeight));
+                    targetOffset = qBound(0, targetOffset, totalHeight - visibleHeight);
+
+                    if (m_scrollAnimation->state() == QAbstractAnimation::Running) {
+                        m_scrollAnimation->stop();
+                    }
+                    m_scrollAnimation->setStartValue(m_scrollOffset);
+                    m_scrollAnimation->setEndValue(targetOffset);
+                    m_scrollAnimation->start();
+                }
+            }
+            event->accept();
+            return;
+        }
+
+        int clickedRow = getRowAtPosition(event->pos());
+        if (clickedRow >= 0 && clickedRow < static_cast<int>(m_items.size())) {
+            setCurrentRow(clickedRow);
+            emit itemClicked(m_items[clickedRow]);
+        }
+    }
+    QWidget::mousePressEvent(event);
+}
+
+void LDETLabelList::mouseDoubleClickEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton) {
+        int clickedRow = getRowAtPosition(event->pos());
+        if (clickedRow >= 0 && clickedRow < static_cast<int>(m_items.size())) {
+            emit itemDoubleClicked(m_items[clickedRow]);
+        }
+    }
+    QWidget::mouseDoubleClickEvent(event);
+}
+
+void LDETLabelList::leaveEvent(QEvent *event)
+{
+    m_hoveredRow = -1;
+    m_scrollbarDragging = false;
+    update();
+    QWidget::leaveEvent(event);
+}
+
+void LDETLabelList::mouseReleaseEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton && m_scrollbarDragging) {
+        m_scrollbarDragging = false;
+    }
+    QWidget::mouseReleaseEvent(event);
+}
+
+void LDETLabelList::wheelEvent(QWheelEvent *event)
+{
+    int totalHeight = static_cast<int>(m_items.size()) * ITEM_HEIGHT;
+    int visibleHeight = height();
+
+    if (totalHeight <= visibleHeight) {
+        event->accept();
+        return;
+    }
+
+    int delta = event->angleDelta().y();
+    int targetOffset = m_scrollOffset - delta / 2;
+    int maxOffset = totalHeight - visibleHeight;
+    targetOffset = qBound(0, targetOffset, maxOffset);
+
+    if (m_scrollAnimation->state() == QAbstractAnimation::Running) {
+        m_scrollAnimation->stop();
+    }
+    m_scrollAnimation->setStartValue(m_scrollOffset);
+    m_scrollAnimation->setEndValue(targetOffset);
+    m_scrollAnimation->start();
+
+    event->accept();
+}
+
+void LDETLabelList::resizeEvent(QResizeEvent *event)
+{
+    int totalHeight = static_cast<int>(m_items.size()) * ITEM_HEIGHT;
+    int visibleHeight = height();
+    int maxOffset = qMax(0, totalHeight - visibleHeight);
+    m_scrollOffset = qBound(0, m_scrollOffset, maxOffset);
+    QWidget::resizeEvent(event);
+    update();
+}
+
+void LDETLabelList::keyPressEvent(QKeyEvent *event)
+{
+    int current = m_selectedRow;
+    int newIndex = current;
+
+    switch (event->key()) {
+    case Qt::Key_Up:
+        newIndex = qMax(0, current - 1);
+        break;
+    case Qt::Key_Down:
+        newIndex = qMin(count() - 1, current + 1);
+        break;
+    case Qt::Key_Home:
+        newIndex = 0;
+        break;
+    case Qt::Key_End:
+        newIndex = count() - 1;
+        break;
+    case Qt::Key_PageUp:
+        newIndex = qMax(0, current - qMax(1, height() / ITEM_HEIGHT));
+        break;
+    case Qt::Key_PageDown:
+        newIndex = qMin(count() - 1, current + qMax(1, height() / ITEM_HEIGHT));
+        break;
+    case Qt::Key_Space:
+    case Qt::Key_Return:
+    case Qt::Key_Enter:
+        if (current >= 0 && current < count()) {
+            emit itemClicked(m_items[current]);
+        }
+        event->accept();
+        return;
+    default:
+        QWidget::keyPressEvent(event);
+        return;
+    }
+
+    if (newIndex != current) {
+        if (m_scrollAnimation->state() == QAbstractAnimation::Running) {
+            m_scrollAnimation->stop();
+        }
+        setCurrentRow(newIndex);
+        // 自动滚动到可视区域
+        int itemTop = newIndex * ITEM_HEIGHT;
+        int itemBottom = itemTop + ITEM_HEIGHT;
+        if (itemTop < m_scrollOffset) {
+            m_scrollOffset = itemTop;
+        } else if (itemBottom > m_scrollOffset + height()) {
+            m_scrollOffset = itemBottom - height();
+        }
+        update();
+    }
+    event->accept();
+}

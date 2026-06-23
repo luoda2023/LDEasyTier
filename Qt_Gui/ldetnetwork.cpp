@@ -1,0 +1,2972 @@
+#include <cmath>
+#include <set>
+#include <iostream>
+
+#include <QRegularExpressionValidator>
+#include <QFormLayout>
+#include <QFontDatabase>
+#include <QFileDialog>
+#include <QStandardPaths>
+#include <QStyleHints>
+#include <QResizeEvent>
+
+#ifdef Q_OS_MACOS
+#include <unistd.h>
+#endif
+
+#include "ldetnetwork.h"
+#include "ldetserversdialog.h"
+#include "ldetdrawutils.h"
+
+// 节点列表状态提示字符串
+namespace NodeStatusText {
+    // 有节点时显示
+    const QString &WITH_NODES = QStringLiteral("节点列表:");
+    // 无节点，网络未运行
+    const QString &NO_NODES_NOT_RUNNING = QStringLiteral("节点列表: 暂无节点，请先运行网络");
+    // 无节点（网络运行中或通用情况）
+    const QString &NO_NODES = QStringLiteral("节点列表: 暂无节点");
+}
+
+LDETNetwork::LDETNetwork(QWidget *parent)
+    : QWidget(parent)
+    , m_leftFrame(nullptr)
+    , m_leftLayout(nullptr)
+    , m_networksList(nullptr)
+    , m_newNetworkBtn(nullptr)
+    , m_runNetworkBtn(nullptr)
+    , m_importConfBtn(nullptr)
+    , m_exportConfBtn(nullptr)
+    , m_tabWidget(nullptr)
+    , m_basicSettingsTab(nullptr)
+    , m_advancedSettingsTab(nullptr)
+    , m_runningStatusTab(nullptr)
+    , m_runningLogTab(nullptr)
+    // 基础设置控件
+    , m_hostnameEdit(nullptr)
+    , m_networkNameEdit(nullptr)
+    , m_networkSecretEdit(nullptr)
+    , m_dhcpCheckBox(nullptr)
+    , m_ipv4Edit(nullptr)
+    , m_latencyFirstCheckBox(nullptr)
+    , m_privateModeCheckBox(nullptr)
+    , m_serverEdit(nullptr)
+    , m_addServerBtn(nullptr)
+    , m_serverListWidget(nullptr)
+    , m_removeServerBtn(nullptr)
+    , m_publicServerBtn(nullptr)
+    , m_enableKcpProxyCheckBox(nullptr)
+    , m_disableKcpInputCheckBox(nullptr)
+    , m_noTunCheckBox(nullptr)
+    , m_enableQuicProxyCheckBox(nullptr)
+    , m_disableQuicInputCheckBox(nullptr)
+    , m_disableRelayKcpCheckBox(nullptr)
+    , m_disableRelayQuicCheckBox(nullptr)
+    , m_enableRelayForeignNetworkKcpCheckBox(nullptr)
+    , m_enableRelayForeignNetworkQuicCheckBox(nullptr)
+    , m_disableUdpHolePunchingCheckBox(nullptr)
+    , m_multiThreadCheckBox(nullptr)
+    , m_useSmoltcpCheckBox(nullptr)
+    , m_bindDeviceCheckBox(nullptr)
+    , m_disableP2pCheckBox(nullptr)
+    , m_enableExitNodeCheckBox(nullptr)
+    , m_systemForwardingCheckBox(nullptr)
+    , m_disableSymHolePunchingCheckBox(nullptr)
+    , m_disableIpv6CheckBox(nullptr)
+    , m_relayAllPeerRpcCheckBox(nullptr)
+    , m_enableEncryptionCheckBox(nullptr)
+    , m_acceptDnsCheckBox(nullptr)
+    , m_devNameEdit(nullptr)
+    , m_mtuEdit(nullptr)
+    // 高级设置控件 - 网络白名单
+    , m_foreignNetworkWhitelistCheckBox(nullptr)
+    , m_foreignNetworkWhitelistEdit(nullptr)
+    , m_addWhitelistBtn(nullptr)
+    , m_whitelistListWidget(nullptr)
+    , m_removeWhitelistBtn(nullptr)
+    // 高级设置控件 - 监听地址
+    , m_listenAddrEdit(nullptr)
+    , m_addListenAddrBtn(nullptr)
+    , m_listenAddrListWidget(nullptr)
+    , m_removeListenAddrBtn(nullptr)
+    // 高级设置控件 - 子网代理 CIDR
+    , m_proxyNetworkEdit(nullptr)
+    , m_addProxyNetworkBtn(nullptr)
+    , m_proxyNetworkListWidget(nullptr)
+    , m_removeProxyNetworkBtn(nullptr)
+    , m_calculateCidrBtn(nullptr)
+    // 高级设置控件 - 自定义路由规则
+    , m_customRouteEdit(nullptr)
+    , m_addCustomRouteBtn(nullptr)
+    , m_customRouteListWidget(nullptr)
+    , m_removeCustomRouteBtn(nullptr)
+    // 高级设置控件 - 出口节点列表
+    , m_exitNodeEdit(nullptr)
+    , m_addExitNodeBtn(nullptr)
+    , m_exitNodeListWidget(nullptr)
+    , m_removeExitNodeBtn(nullptr)
+    // 运行状态控件
+    , m_statusLabel(nullptr)
+    , m_nodeInfoContainer(nullptr)
+    , m_nodeInfoLayout(nullptr)
+    , m_emptyLabel(nullptr)
+    // 运行日志控件
+    , m_logTextEdit(nullptr)
+    // 运行网络相关
+    , m_runThread(nullptr)
+    , m_runWorker(nullptr)
+    , m_progressDialog(nullptr)
+    , m_monitorTimer(nullptr)
+    , m_runningNetworkCount(0)
+    , m_mainLayout(nullptr)
+{
+    initUI();
+    
+    // 初始化运行网络的线程和 Worker
+    m_runThread = new QThread(this);
+    m_runWorker = new ETRunWorker();
+    m_runWorker->moveToThread(m_runThread);
+    
+    // 连接 Worker 信号到主线程槽
+    connect(m_runWorker, &ETRunWorker::etRunStarted, this, &LDETNetwork::onNetworkStarted, Qt::QueuedConnection);
+    connect(m_runWorker, &ETRunWorker::etRunStopped, this, &LDETNetwork::onNetworkStopped, Qt::QueuedConnection);
+    connect(m_runWorker, &ETRunWorker::infosCollected, this, &LDETNetwork::onInfosCollected, Qt::QueuedConnection);
+    
+    // 线程结束时清理 Worker
+    connect(m_runThread, &QThread::finished, m_runWorker, &QObject::deleteLater);
+    
+    // 启动线程
+    m_runThread->start();
+    
+    // 初始化节点监测定时器
+    m_monitorTimer = new QTimer(this);
+    m_monitorTimer->setInterval(2000);  // 2秒间隔
+    connect(m_monitorTimer, &QTimer::timeout, this, &LDETNetwork::onMonitorTimerTimeout);
+    
+    // 启用右键菜单
+    m_networksList->setContextMenuPolicy(Qt::CustomContextMenu);
+    
+    // 连接信号槽
+    connect(m_newNetworkBtn, &QPushButton::clicked, this, &LDETNetwork::onNewNetwork);
+    connect(m_networksList, &LDETLabelList::itemSelectionChanged, this, &LDETNetwork::onNetworkSelected);
+    connect(m_networksList, &LDETLabelList::customContextMenuRequested, this, &LDETNetwork::onListContextMenu);
+    connect(m_networksList, &LDETLabelList::itemDoubleClicked, this, [this](LDETLabelListItem *item) {
+        Q_UNUSED(item)
+        onListDoubleClicked();
+    });
+    connect(m_exportConfBtn, &QPushButton::clicked, this, &LDETNetwork::onExportConf);
+    connect(m_importConfBtn, &QPushButton::clicked, this, &LDETNetwork::onImportConf);
+    connect(m_runNetworkBtn, &QPushButton::clicked, this, &LDETNetwork::onRunNetworkBtnClicked);
+    
+    // 设置UI控件的信号连接
+    setupUIConnections();
+    
+    // 初始化 TabWidget 状态（禁用）
+    updateTabWidgetState();
+}
+
+LDETNetwork::~LDETNetwork()
+{
+    // 必须在 QObject 子对象（m_runThread 等）被销毁之前停止所有运行中的网络配置。
+    // 否则 ~QObject() 的 child cleanup 会先销毁 m_runThread，
+    // 导致跨线程 stopNetwork 调用无法执行，产生"野网络"。
+    for (auto &conf : m_networkConfs) {
+        if (!conf.isRunning()) {
+            continue;
+        }
+        stopNetworkAndWait(conf.getInstanceName(), 30000);
+        conf.setRunning(false);
+    }
+
+    if (m_runThread) {
+        m_runThread->quit();
+        m_runThread->wait();
+    }
+
+    if (m_progressDialog) {
+        m_progressDialog->deleteLater();
+        m_progressDialog = nullptr;
+    }
+}
+
+void LDETNetwork::initUI()
+{
+    // 创建主布局
+    m_mainLayout = new QHBoxLayout(this);
+    m_mainLayout->setSpacing(5);
+    m_mainLayout->setContentsMargins(5, 5, 5, 5);
+
+    // 初始化左右面板
+    initLeftPanel();
+    initRightPanel();
+}
+
+void LDETNetwork::initLeftPanel()
+{
+    // 创建左侧面板容器
+    m_leftFrame = new QFrame(this);
+    m_leftFrame->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+
+    // 创建左侧布局
+    m_leftLayout = new QVBoxLayout(m_leftFrame);
+    m_leftLayout->setSpacing(5);
+    m_leftLayout->setContentsMargins(1, 0, 0, 0);
+
+    // 创建网络列表标题
+    QLabel *networksLabel = new QLabel(tr("我创建的:"), m_leftFrame);
+    QFont font = networksLabel->font();
+    font.setPointSize(12);
+    font.setWeight(QFont::Bold);
+    networksLabel->setFont(font);
+    networksLabel->setMinimumHeight(32);
+    m_leftLayout->addWidget(networksLabel);
+
+    // 创建网络列表
+    m_networksList = new LDETLabelList(m_leftFrame);
+    m_networksList->setMinimumSize(LEFT_PANEL_MIN_WIDTH, 0);
+    // maximum width handled by layout
+
+    m_leftLayout->addWidget(m_networksList);
+
+    // 创建按钮
+    m_runNetworkBtn = new LDETPushBtn(tr("运行网络"), m_leftFrame);
+    m_runNetworkBtn->setIcon(QIcon(QStringLiteral(":/icons/net-page.svg")));
+    m_newNetworkBtn = new LDETPushBtn(tr("新建网络"), m_leftFrame);
+    m_newNetworkBtn->setIcon(QIcon(QStringLiteral(":/icons/add.svg")));
+    m_importConfBtn = new LDETPushBtn(tr("导入配置"), m_leftFrame);
+    m_importConfBtn->setIcon(QIcon(QStringLiteral(":/icons/import.svg")));
+    m_exportConfBtn = new LDETPushBtn(tr("导出配置"), m_leftFrame);
+    m_exportConfBtn->setIcon(QIcon(QStringLiteral(":/icons/export.svg")));
+
+    m_leftLayout->addWidget(m_runNetworkBtn);
+    m_leftLayout->addWidget(m_newNetworkBtn);
+    m_leftLayout->addWidget(m_importConfBtn);
+    m_leftLayout->addWidget(m_exportConfBtn);
+
+    // 将左侧面板添加到主布局
+    m_mainLayout->addWidget(m_leftFrame);
+    // 伸缩因子：左侧占 1 份（后面会配合右侧占 3 份）
+    m_mainLayout->setStretchFactor(m_leftFrame, 1);
+    m_mainLayout->setStretchFactor(m_tabWidget, 3);
+}
+
+void LDETNetwork::initRightPanel()
+{
+    // 创建选项卡容器
+    m_tabWidget = new LDETTabWidget(this);
+    m_tabWidget->setCurrentIndex(0);
+
+    // 创建基础设置选项卡
+    m_basicSettingsTab = new QWidget();
+    m_tabWidget->addTab(m_basicSettingsTab, tr("基础设置"));
+    initBasicSettingsPage();
+
+    // 创建高级设置选项卡
+    m_advancedSettingsTab = new QWidget();
+    m_tabWidget->addTab(m_advancedSettingsTab, tr("高级设置"));
+    initAdvancedSettingsPage();
+
+    // 创建运行状态选项卡
+    m_runningStatusTab = new QWidget();
+    m_tabWidget->addTab(m_runningStatusTab, tr("运行状态"));
+    initRunningStatusPage();
+
+    // 创建运行日志选项卡
+    m_runningLogTab = new QWidget();
+    m_tabWidget->addTab(m_runningLogTab, tr("运行日志"));
+    initRunningLogPage();
+
+    // 将选项卡添加到主布局
+    m_mainLayout->addWidget(m_tabWidget);
+}
+
+void LDETNetwork::initBasicSettingsPage()
+{
+    // 创建滚动区
+    QScrollArea *scrollArea = new QScrollArea(m_basicSettingsTab);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+    // 设置透明背景
+    scrollArea->setAutoFillBackground(false);
+    scrollArea->viewport()->setAutoFillBackground(false);
+
+    LDETSmoothScroll::install(scrollArea);
+
+    // 创建滚动区内容部件
+    QWidget *scrollContent = new QWidget(scrollArea);
+    scrollContent->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    scrollContent->setAutoFillBackground(false);
+
+    // 设置全局字体大小为10px
+    QFont contentFont = scrollContent->font();
+    contentFont.setPointSize(10);
+    scrollContent->setFont(contentFont);
+
+    // 创建垂直布局
+    QVBoxLayout *scrollLayout = new QVBoxLayout(scrollContent);
+    scrollLayout->setContentsMargins(20, 20, 20, 20);
+    scrollLayout->setSpacing(8);
+
+    // 创建网络设置表单
+    QWidget *networkFormWidget = new QWidget(scrollContent);
+    QFormLayout *networkFormLayout = new QFormLayout(networkFormWidget);
+    networkFormLayout->setHorizontalSpacing(20);
+    networkFormLayout->setVerticalSpacing(15);
+
+    // 用户名输入框
+    m_hostnameEdit = new LDETLineEdit(networkFormWidget);
+    m_hostnameEdit->setPlaceholderText(tr("请输入用户名（默认为本机名称）"));
+    networkFormLayout->addRow(tr("用户名:"), m_hostnameEdit);
+
+    // 网络号输入框
+    m_networkNameEdit = new LDETLineEdit(networkFormWidget);
+    m_networkNameEdit->setPlaceholderText(tr("请输入网络名称"));
+    networkFormLayout->addRow(tr("网络号:"), m_networkNameEdit);
+
+    // 密码输入框（使用LDETLineEdit内置的密码切换按钮）
+    m_networkSecretEdit = new LDETLineEdit(networkFormWidget);
+    m_networkSecretEdit->setPlaceholderText(tr("请输入密码"));
+    m_networkSecretEdit->setEchoMode(QLineEdit::Password);
+
+    networkFormLayout->addRow(tr("密码:"), m_networkSecretEdit);
+
+    // DHCP 开关
+    m_dhcpCheckBox = new LDETCheckBtn(networkFormWidget);
+    m_dhcpCheckBox->setText(tr("启用 DHCP"));
+    m_dhcpCheckBox->setChecked(true);
+    m_dhcpCheckBox->setBorderless(true);
+    m_dhcpCheckBox->setToolTip(tr("自动分配虚拟IP地址"));
+    networkFormLayout->addRow(tr("IP 设置:"), m_dhcpCheckBox);
+
+    // IPv4 地址输入框
+    m_ipv4Edit = new LDETLineEdit(networkFormWidget);
+    m_ipv4Edit->setPlaceholderText(tr("请输入 IPv4 地址"));
+    m_ipv4Edit->setEnabled(false);
+    // 设置 IP 地址验证器
+    static const QRegularExpression ipRegex("^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$");
+    m_ipv4Edit->setValidator(new QRegularExpressionValidator(ipRegex, m_ipv4Edit));
+    networkFormLayout->addRow(tr("IPv4 地址:"), m_ipv4Edit);
+
+    // 低延迟优先和私有模式放在同一行
+    QWidget *optionsWidget = new QWidget(networkFormWidget);
+    QHBoxLayout *optionsLayout = new QHBoxLayout(optionsWidget);
+    optionsLayout->setContentsMargins(0, 0, 0, 0);
+    optionsLayout->setSpacing(20);
+
+    m_latencyFirstCheckBox = new LDETCheckBtn(optionsWidget);
+    m_latencyFirstCheckBox->setText(tr("低延迟优先"));
+    m_latencyFirstCheckBox->setBorderless(true);
+    m_latencyFirstCheckBox->setMaximumWidth(200);
+    m_latencyFirstCheckBox->setToolTip(tr("开启后,会根据算法自动选择低延时的线路进行连接"));
+
+    m_privateModeCheckBox = new LDETCheckBtn(optionsWidget);
+    m_privateModeCheckBox->setText(tr("私有模式"));
+    m_privateModeCheckBox->setChecked(true);
+    m_privateModeCheckBox->setBorderless(true);
+    m_privateModeCheckBox->setMaximumWidth(200);
+    m_privateModeCheckBox->setToolTip(tr("开启后,不允许网络号和密码不相同的节点使用本节点进行数据中转"));
+
+    optionsLayout->addWidget(m_latencyFirstCheckBox, 1);
+    optionsLayout->addWidget(m_privateModeCheckBox, 1);
+    networkFormLayout->addRow(QString(), optionsWidget);
+
+    scrollLayout->addWidget(networkFormWidget);
+
+    // 创建服务器管理分组
+    QWidget *serverWidget = new QWidget(scrollContent);
+    QVBoxLayout *serverLayout = new QVBoxLayout(serverWidget);
+    serverLayout->setContentsMargins(15, 6, 15, 15);
+
+    // 服务器标题
+    QLabel *serverTitle = new QLabel(tr("服务器:"), serverWidget);
+    serverLayout->addWidget(serverTitle);
+
+    // 服务器输入框和添加按钮
+    QHBoxLayout *addServerLayout = new QHBoxLayout();
+    m_serverEdit = new LDETLineEdit(serverWidget);
+    m_serverEdit->setPlaceholderText(tr("请输入服务器地址"));
+    m_addServerBtn = new LDETPushBtn(tr("添加"), serverWidget);
+    m_addServerBtn->setMinimumWidth(80);
+    m_addServerBtn->setIcon(QIcon(QStringLiteral(":/icons/add.svg")));
+    addServerLayout->addWidget(m_serverEdit, 1);
+    addServerLayout->addWidget(m_addServerBtn);
+    serverLayout->addLayout(addServerLayout);
+
+    // 服务器列表和删除按钮
+    QHBoxLayout *serverListLayout = new QHBoxLayout();
+    m_serverListWidget = new QListWidget(serverWidget);
+    m_serverListWidget->setMinimumHeight(80);
+
+    m_removeServerBtn = new LDETPushBtn(tr("删除"), serverWidget);
+    m_removeServerBtn->setMinimumWidth(80);
+    m_removeServerBtn->setIcon(QIcon(QStringLiteral(":/icons/delete.svg")));
+    m_removeServerBtn->setEnabled(false);
+    serverListLayout->addWidget(m_serverListWidget, 1);
+    serverListLayout->addWidget(m_removeServerBtn);
+    serverLayout->addLayout(serverListLayout);
+
+    // 公共服务器按钮
+    m_publicServerBtn = new LDETPushBtn(tr("服务器收藏列表"), serverWidget);
+    serverLayout->addWidget(m_publicServerBtn);
+
+    scrollLayout->addWidget(serverWidget);
+
+    // 添加垂直伸展空间
+    scrollLayout->addStretch();
+
+    // 设置滚动区内容
+    scrollArea->setWidget(scrollContent);
+
+    // 将滚动区添加到基础设置页面
+    QVBoxLayout *pageLayout = new QVBoxLayout(m_basicSettingsTab);
+    pageLayout->setContentsMargins(0, 0, 0, 0);
+    pageLayout->addWidget(scrollArea);
+
+    // 设置服务器列表的字体为 UbuntuMono
+    int fontId = QFontDatabase::addApplicationFont(QStringLiteral(":/icons/UbuntuMono-B.ttf"));
+    if (fontId != -1) {
+        QStringList fontFamilies = QFontDatabase::applicationFontFamilies(fontId);
+        if (!fontFamilies.isEmpty()) {
+            QFont monoFont(fontFamilies.first());
+            monoFont.setPointSize(11);
+            m_serverListWidget->setFont(monoFont);
+        }
+    }
+
+    // 连接信号槽
+    connect(m_dhcpCheckBox, &LDETCheckBtn::toggled, this, [this](bool checked) {
+        m_ipv4Edit->setEnabled(!checked);
+    });
+    connect(m_serverListWidget, &QListWidget::itemSelectionChanged, this, [this]() {
+        m_removeServerBtn->setEnabled(m_serverListWidget->currentRow() >= 0);
+    });
+}
+
+void LDETNetwork::initAdvancedSettingsPage()
+{
+    // 创建滚动区
+    QScrollArea *scrollArea = new QScrollArea(m_advancedSettingsTab);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+    // 设置透明背景
+    scrollArea->setAutoFillBackground(false);
+    scrollArea->viewport()->setAutoFillBackground(false);
+
+    LDETSmoothScroll::install(scrollArea);
+
+    // 创建滚动区内容部件
+    QWidget *scrollContent = new QWidget(scrollArea);
+    scrollContent->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    scrollContent->setAutoFillBackground(false);
+
+    // 设置全局字体大小为10px
+    QFont contentFont = scrollContent->font();
+    contentFont.setPointSize(10);
+    scrollContent->setFont(contentFont);
+
+    // 创建垂直布局
+    QVBoxLayout *scrollLayout = new QVBoxLayout(scrollContent);
+    scrollLayout->setContentsMargins(10, 10, 10, 10);
+    scrollLayout->setSpacing(8);
+
+    // 辅助 lambda：创建板块标题（粗体）
+    auto createSectionTitle = [&](const QString &text) -> QLabel* {
+        QLabel *title = new QLabel(text, scrollContent);
+        QFont f = title->font();
+        f.setPointSize(11);
+        f.setWeight(QFont::Bold);
+        title->setFont(f);
+        title->setContentsMargins(15, 12, 15, 0);
+        return title;
+    };
+
+    // 辅助 lambda：创建响应式网格控件
+    auto createResponsiveGrid = [&](QWidget *parent) -> LDETResponsiveGrid* {
+        auto *grid = new LDETResponsiveGrid(parent);
+        grid->setMinColumns(2);
+        grid->setMaxColumns(5);
+        grid->setSafetyRatio(1.1);
+        return grid;
+    };
+
+    // ========== 板块1: 传输协议 ==========
+    scrollLayout->addWidget(createSectionTitle(tr("传输协议")));
+
+    LDETResponsiveGrid *protocolGrid = createResponsiveGrid(scrollContent);
+
+    m_enableKcpProxyCheckBox = new LDETCheckBtn(protocolGrid);
+    m_enableKcpProxyCheckBox->setText(tr("启用 KCP 代理"));
+    m_enableKcpProxyCheckBox->setChecked(true);
+    m_enableKcpProxyCheckBox->setToolTip(tr("使用UDP协议代理TCP流量,启用以获得更好的UDP P2P效果"));
+    m_enableKcpProxyCheckBox->setBriefTip(tr("允许使用 KCP 协议发包"));
+
+    m_disableKcpInputCheckBox = new LDETCheckBtn(protocolGrid);
+    m_disableKcpInputCheckBox->setText(tr("禁用 KCP 输入"));
+    m_disableKcpInputCheckBox->setChecked(false);
+    m_disableKcpInputCheckBox->setToolTip(tr("不接受通过KCP协议传输的流量"));
+    m_disableKcpInputCheckBox->setBriefTip(tr("不接收 KCP 协议的流量"));
+
+    m_enableQuicProxyCheckBox = new LDETCheckBtn(protocolGrid);
+    m_enableQuicProxyCheckBox->setText(tr("启用 QUIC 代理"));
+    m_enableQuicProxyCheckBox->setChecked(false);
+    m_enableQuicProxyCheckBox->setToolTip(tr("QUIC是一个由Google设计,基于UDP的新一代可靠传输层协议,启用以获得更好的UDP P2P效果"));
+    m_enableQuicProxyCheckBox->setBriefTip(tr("允许使用 QUIC 协议发包"));
+
+    m_disableQuicInputCheckBox = new LDETCheckBtn(protocolGrid);
+    m_disableQuicInputCheckBox->setText(tr("禁用 QUIC 输入"));
+    m_disableQuicInputCheckBox->setChecked(false);
+    m_disableQuicInputCheckBox->setToolTip(tr("不接受通过 QUIC 协议传输的流量"));
+    m_disableQuicInputCheckBox->setBriefTip(tr("不接收 QUIC 协议的流量"));
+
+    m_disableRelayKcpCheckBox = new LDETCheckBtn(protocolGrid);
+    m_disableRelayKcpCheckBox->setText(tr("禁止转发 KCP"));
+    m_disableRelayKcpCheckBox->setChecked(false);
+    m_disableRelayKcpCheckBox->setToolTip(tr("禁止本节点转发 KCP 数据包，防止过度消耗流量"));
+    m_disableRelayKcpCheckBox->setBriefTip(tr("不转发 KCP 流量"));
+
+    m_disableRelayQuicCheckBox = new LDETCheckBtn(protocolGrid);
+    m_disableRelayQuicCheckBox->setText(tr("禁止转发 QUIC"));
+    m_disableRelayQuicCheckBox->setChecked(false);
+    m_disableRelayQuicCheckBox->setToolTip(tr("禁止本节点转发 QUIC 数据包，防止过度消耗流量"));
+    m_disableRelayQuicCheckBox->setBriefTip(tr("不转发 QUIC 流量"));
+
+    m_enableRelayForeignNetworkKcpCheckBox = new LDETCheckBtn(protocolGrid);
+    m_enableRelayForeignNetworkKcpCheckBox->setText(tr("允许转发其他网络 KCP"));
+    m_enableRelayForeignNetworkKcpCheckBox->setChecked(false);
+    m_enableRelayForeignNetworkKcpCheckBox->setToolTip(tr("作为共享节点时也可以转发其他网络的 KCP 数据包"));
+    m_enableRelayForeignNetworkKcpCheckBox->setBriefTip(tr("转发其他网络 KCP 流量"));
+
+    m_enableRelayForeignNetworkQuicCheckBox = new LDETCheckBtn(protocolGrid);
+    m_enableRelayForeignNetworkQuicCheckBox->setText(tr("允许转发其他网络 QUIC"));
+    m_enableRelayForeignNetworkQuicCheckBox->setChecked(false);
+    m_enableRelayForeignNetworkQuicCheckBox->setToolTip(tr("作为共享节点时也可以转发其他网络的 QUIC 数据包"));
+    m_enableRelayForeignNetworkQuicCheckBox->setBriefTip(tr("转发其他网络 QUIC 流量"));
+
+    m_enableEncryptionCheckBox = new LDETCheckBtn(protocolGrid);
+    m_enableEncryptionCheckBox->setText(tr("启用加密"));
+    m_enableEncryptionCheckBox->setChecked(true);
+    m_enableEncryptionCheckBox->setToolTip(tr("启用本节点通信的加密，必须与对等节点相同,正常情况下请保持加密"));
+    m_enableEncryptionCheckBox->setBriefTip(tr("正常情况下请保持加密"));
+
+    protocolGrid->addItem(m_enableKcpProxyCheckBox);
+    protocolGrid->addItem(m_disableKcpInputCheckBox);
+    protocolGrid->addItem(m_enableQuicProxyCheckBox);
+    protocolGrid->addItem(m_disableQuicInputCheckBox);
+    protocolGrid->addItem(m_disableRelayKcpCheckBox);
+    protocolGrid->addItem(m_disableRelayQuicCheckBox);
+    protocolGrid->addItem(m_enableRelayForeignNetworkKcpCheckBox);
+    protocolGrid->addItem(m_enableRelayForeignNetworkQuicCheckBox);
+    protocolGrid->addItem(m_enableEncryptionCheckBox);
+
+    scrollLayout->addWidget(protocolGrid);
+
+    // 协议下拉选择框行
+    {
+        QWidget *comboRow = new QWidget(scrollContent);
+        QHBoxLayout *comboLayout = new QHBoxLayout(comboRow);
+        comboLayout->setContentsMargins(15, 2, 15, 2);
+        comboLayout->setSpacing(10);
+
+        // 默认连接协议
+        QLabel *protocolLabel = new QLabel(tr("默认连接协议:"), comboRow);
+        protocolLabel->setToolTip(tr("与对等节点进行 P2P 时默认的连接协议,不指定则由程序自动选择"));
+        m_defaultProtocolCombo = new LDETComboBox(comboRow);
+        m_defaultProtocolCombo->addItem(tr("不指定"), static_cast<int>(DefaultProtocol::None));
+        m_defaultProtocolCombo->addItem("udp", static_cast<int>(DefaultProtocol::Udp));
+        m_defaultProtocolCombo->addItem("tcp", static_cast<int>(DefaultProtocol::Tcp));
+        m_defaultProtocolCombo->addItem("wg", static_cast<int>(DefaultProtocol::Wg));
+        m_defaultProtocolCombo->addItem("ws", static_cast<int>(DefaultProtocol::Ws));
+        m_defaultProtocolCombo->addItem("wss", static_cast<int>(DefaultProtocol::Wss));
+        m_defaultProtocolCombo->setToolTip(m_defaultProtocolCombo->currentText());
+        connect(m_defaultProtocolCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+                [this]() { m_defaultProtocolCombo->setToolTip(m_defaultProtocolCombo->currentText()); });
+
+        // 默认加密协议
+        QLabel *encLabel = new QLabel(tr("默认加密协议:"), comboRow);
+        encLabel->setToolTip(tr("传输数据时使用的加密协议,所有对等节点要求此项设置一致"));
+        m_encryptionAlgorithmCombo = new LDETComboBox(comboRow);
+        m_encryptionAlgorithmCombo->addItem("aes-gcm", static_cast<int>(EncryptionAlgorithm::AesGcm));
+        m_encryptionAlgorithmCombo->addItem("xor", static_cast<int>(EncryptionAlgorithm::Xor));
+        m_encryptionAlgorithmCombo->addItem("chacha20", static_cast<int>(EncryptionAlgorithm::Chacha20));
+        m_encryptionAlgorithmCombo->addItem("aes-gcm-256", static_cast<int>(EncryptionAlgorithm::AesGcm256));
+        m_encryptionAlgorithmCombo->addItem("openssl-aes128-gcm", static_cast<int>(EncryptionAlgorithm::OpensslAes128Gcm));
+        m_encryptionAlgorithmCombo->addItem("openssl-aes256-gcm", static_cast<int>(EncryptionAlgorithm::OpensslAes256Gcm));
+        m_encryptionAlgorithmCombo->addItem("openssl-chacha20", static_cast<int>(EncryptionAlgorithm::OpensslChacha20));
+        m_encryptionAlgorithmCombo->setCurrentIndex(0);  // aes-gcm 为默认
+        m_encryptionAlgorithmCombo->setToolTip(m_encryptionAlgorithmCombo->currentText());
+        connect(m_encryptionAlgorithmCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+                [this]() { m_encryptionAlgorithmCombo->setToolTip(m_encryptionAlgorithmCombo->currentText()); });
+
+        comboLayout->addWidget(protocolLabel);
+        comboLayout->addWidget(m_defaultProtocolCombo, 1);
+        comboLayout->addSpacing(15);
+        comboLayout->addWidget(encLabel);
+        comboLayout->addWidget(m_encryptionAlgorithmCombo, 1);
+
+        scrollLayout->addWidget(comboRow);
+    }
+
+    // ========== 板块2: P2P 连接 ==========
+    scrollLayout->addWidget(createSectionTitle(tr("P2P 连接")));
+
+    LDETResponsiveGrid *p2pGrid = createResponsiveGrid(scrollContent);
+
+    
+    m_p2pOnlyCheckBox = new LDETCheckBtn(p2pGrid);
+    m_p2pOnlyCheckBox->setText(tr("仅 P2P"));
+    m_p2pOnlyCheckBox->setChecked(false);
+    m_p2pOnlyCheckBox->setToolTip(tr("仅与已经建立 P2P 连接的对等节点通信,不通过中继"));
+    m_p2pOnlyCheckBox->setBriefTip(tr("只与 P2P 直连节点通信"));
+
+    m_disableP2pCheckBox = new LDETCheckBtn(p2pGrid);
+    m_disableP2pCheckBox->setText(tr("禁用 P2P"));
+    m_disableP2pCheckBox->setChecked(false);
+    m_disableP2pCheckBox->setToolTip(tr("流量需要经过你添加的中转服务器,不直接与其他节点建立P2P连接"));
+    m_disableP2pCheckBox->setBriefTip(tr("流量只从添加的节点中转"));
+    
+    m_needP2pCheckBox = new LDETCheckBtn(p2pGrid);
+    m_needP2pCheckBox->setText(tr("需要 P2P"));
+    m_needP2pCheckBox->setChecked(false);
+    m_needP2pCheckBox->setToolTip(tr("无视其他限制,要求与本节点建立 P2P 打洞"));
+    m_needP2pCheckBox->setBriefTip(tr("无视限制强制要求打洞"));
+
+    m_lazyP2pCheckBox = new LDETCheckBtn(p2pGrid);
+    m_lazyP2pCheckBox->setText(tr("按需 P2P"));
+    m_lazyP2pCheckBox->setChecked(false);
+    m_lazyP2pCheckBox->setToolTip(tr("仅在有流量连通需求时才尝试打洞,节约资源"));
+    m_lazyP2pCheckBox->setBriefTip(tr("按需打洞,节省资源"));
+
+    m_disableUdpHolePunchingCheckBox = new LDETCheckBtn(p2pGrid);
+    m_disableUdpHolePunchingCheckBox->setText(tr("禁用 UDP 打洞"));
+    m_disableUdpHolePunchingCheckBox->setChecked(false);
+    m_disableUdpHolePunchingCheckBox->setToolTip(tr("禁用UDP打洞,仅允许通过TCP进行P2P访问"));
+    m_disableUdpHolePunchingCheckBox->setBriefTip(tr("不使用 UDP 协议打洞"));
+
+    m_disableTcpHolePunchingCheckBox = new LDETCheckBtn(p2pGrid);
+    m_disableTcpHolePunchingCheckBox->setText(tr("禁用 TCP 打洞"));
+    m_disableTcpHolePunchingCheckBox->setChecked(false);
+    m_disableTcpHolePunchingCheckBox->setToolTip(tr("禁用TCP打洞,仅允许通过UDP进行P2P访问"));
+    m_disableTcpHolePunchingCheckBox->setBriefTip(tr("不使用 TCP 协议打洞"));
+
+    m_disableUpnpCheckBox = new LDETCheckBtn(p2pGrid);
+    m_disableUpnpCheckBox->setText(tr("禁用 UPnP"));
+    m_disableUpnpCheckBox->setChecked(false);
+    m_disableUpnpCheckBox->setToolTip(tr("禁用 UPnP/NAT-PMP 端口映射"));
+    m_disableUpnpCheckBox->setBriefTip(tr("不使用 UPnP/NAT-PMP"));
+
+    m_disableSymHolePunchingCheckBox = new LDETCheckBtn(p2pGrid);
+    m_disableSymHolePunchingCheckBox->setText(tr("禁用对称 NAT 打洞"));
+    m_disableSymHolePunchingCheckBox->setChecked(false);
+    m_disableSymHolePunchingCheckBox->setBriefTip(tr("在对称 NAT 环境下打洞可能失败"));
+
+    m_relayAllPeerRpcCheckBox = new LDETCheckBtn(p2pGrid);
+    m_relayAllPeerRpcCheckBox->setText(tr("转发 RPC 包"));
+    m_relayAllPeerRpcCheckBox->setChecked(false);
+    m_relayAllPeerRpcCheckBox->setToolTip(tr("转发其他节点的网络配置,不论该节点是否在网络白名单中, 帮助其他节点建立P2P连接"));
+    m_relayAllPeerRpcCheckBox->setBriefTip(tr("帮助其他节点建立P2P连接"));
+
+    m_bindDeviceCheckBox = new LDETCheckBtn(p2pGrid);
+    m_bindDeviceCheckBox->setText(tr("仅使用物理网卡"));
+    m_bindDeviceCheckBox->setChecked(true);
+    m_bindDeviceCheckBox->setToolTip(tr("仅使用物理网卡与其他节点建立P2P连接"));
+    m_bindDeviceCheckBox->setBriefTip(tr("不通过其他虚拟网卡进行连接"));
+
+    p2pGrid->addItem(m_p2pOnlyCheckBox);
+    p2pGrid->addItem(m_disableP2pCheckBox);
+    p2pGrid->addItem(m_needP2pCheckBox);
+    p2pGrid->addItem(m_lazyP2pCheckBox);
+    p2pGrid->addItem(m_disableUdpHolePunchingCheckBox);
+    p2pGrid->addItem(m_disableTcpHolePunchingCheckBox);
+    p2pGrid->addItem(m_disableUpnpCheckBox);
+    p2pGrid->addItem(m_disableSymHolePunchingCheckBox);
+    p2pGrid->addItem(m_relayAllPeerRpcCheckBox);
+    p2pGrid->addItem(m_bindDeviceCheckBox);
+
+    scrollLayout->addWidget(p2pGrid);
+
+    // ========== 板块3: 性能与系统 ==========
+    scrollLayout->addWidget(createSectionTitle(tr("性能与系统")));
+
+    LDETResponsiveGrid *perfGrid = createResponsiveGrid(scrollContent);
+
+    m_multiThreadCheckBox = new LDETCheckBtn(perfGrid);
+    m_multiThreadCheckBox->setText(tr("启用多线程"));
+    m_multiThreadCheckBox->setChecked(true);
+    m_multiThreadCheckBox->setToolTip(tr("后端启用多线程,可提升组网性能,但可能会增加占用"));
+    m_multiThreadCheckBox->setBriefTip(tr("使用多线程优化提升组网性能"));
+
+    m_useSmoltcpCheckBox = new LDETCheckBtn(perfGrid);
+    m_useSmoltcpCheckBox->setText(tr("使用 smoltcp 协议栈"));
+    m_useSmoltcpCheckBox->setChecked(false);
+    m_useSmoltcpCheckBox->setToolTip(tr("使用 smoltcp 协议栈,默认使用系统协议栈"));
+    m_useSmoltcpCheckBox->setBriefTip(tr("默认使用系统协议栈"));
+
+    m_noTunCheckBox = new LDETCheckBtn(perfGrid);
+    m_noTunCheckBox->setText(tr("无 TUN 模式"));
+    m_noTunCheckBox->setChecked(false);
+    m_noTunCheckBox->setToolTip(tr("不创建TUN网卡,开启时本节点无法主动访问其他节点,只能被动访问"));
+    m_noTunCheckBox->setBriefTip(tr("不创建 TUN 虚拟网卡"));
+
+    m_disableIpv6CheckBox = new LDETCheckBtn(perfGrid);
+    m_disableIpv6CheckBox->setText(tr("禁用 IPv6"));
+    m_disableIpv6CheckBox->setChecked(false);
+    m_disableIpv6CheckBox->setToolTip(tr("禁用IPv6连接, 仅使用IPv4"));
+    m_disableIpv6CheckBox->setBriefTip(tr("虚拟网络内禁用 IPv6 通信。"));
+
+    perfGrid->addItem(m_multiThreadCheckBox);
+    perfGrid->addItem(m_useSmoltcpCheckBox);
+    perfGrid->addItem(m_noTunCheckBox);
+    perfGrid->addItem(m_disableIpv6CheckBox);
+
+    scrollLayout->addWidget(perfGrid);
+
+    // TUN 设备名 & MTU 值行
+    {
+        QWidget *tunRow = new QWidget(scrollContent);
+        QHBoxLayout *tunLayout = new QHBoxLayout(tunRow);
+        tunLayout->setContentsMargins(15, 2, 15, 2);
+        tunLayout->setSpacing(10);
+
+        QLabel *devNameLabel = new QLabel(tr("TUN 设备名:"), tunRow);
+        devNameLabel->setToolTip(tr("自定义 TUN 网卡的名称，留空使用默认值"));
+        m_devNameEdit = new LDETLineEdit(tunRow);
+        m_devNameEdit->setPlaceholderText(tr("留空使用默认名称"));
+        m_devNameEdit->setToolTip(tr("自定义 TUN 网卡的名称"));
+
+        QLabel *mtuLabel = new QLabel(tr("MTU 值:"), tunRow);
+        mtuLabel->setToolTip(tr("自定义 MTU 值，范围 1-1380，留空使用默认值"));
+        m_mtuEdit = new LDETLineEdit(tunRow);
+        m_mtuEdit->setPlaceholderText(tr("留空使用默认值"));
+        m_mtuEdit->setToolTip(tr("允许范围 1-1380"));
+        m_mtuEdit->setValidator(new QIntValidator(1, 1380, m_mtuEdit));
+
+        tunLayout->addWidget(devNameLabel);
+        tunLayout->addWidget(m_devNameEdit, 1);
+        tunLayout->addSpacing(15);
+        tunLayout->addWidget(mtuLabel);
+        tunLayout->addWidget(m_mtuEdit, 1);
+
+        scrollLayout->addWidget(tunRow);
+    }
+
+    // ========== 板块4: 网络服务 ==========
+    scrollLayout->addWidget(createSectionTitle(tr("网络服务")));
+
+    LDETResponsiveGrid *serviceGrid = createResponsiveGrid(scrollContent);
+
+    m_enableExitNodeCheckBox = new LDETCheckBtn(serviceGrid);
+    m_enableExitNodeCheckBox->setText(tr("启用出口节点"));
+    m_enableExitNodeCheckBox->setChecked(false);
+    m_enableExitNodeCheckBox->setToolTip(tr("本节点可作为VPN的出口节点, 可被用于端口转发"));
+    m_enableExitNodeCheckBox->setBriefTip(tr("请慎用该功能"));
+
+    m_systemForwardingCheckBox = new LDETCheckBtn(serviceGrid);
+    m_systemForwardingCheckBox->setText(tr("系统转发"));
+    m_systemForwardingCheckBox->setChecked(false);
+    m_systemForwardingCheckBox->setToolTip(tr("通过系统内核转发子网代理数据包，禁用内置NAT"));
+    m_systemForwardingCheckBox->setBriefTip(tr("通过系统内核转发子网数据包"));
+
+    m_acceptDnsCheckBox = new LDETCheckBtn(serviceGrid);
+    m_acceptDnsCheckBox->setText(tr("启用魔法 DNS"));
+    m_acceptDnsCheckBox->setChecked(false);
+    m_acceptDnsCheckBox->setToolTip(tr("启用后可通过\"用户名.et.net\"访问本节点\n注意：Linux用户需要手动配置 DNS 服务器为100.100.100.101"));
+    m_acceptDnsCheckBox->setBriefTip(tr("通过\"用户名.et.net\"访问本节点"));
+
+    serviceGrid->addItem(m_enableExitNodeCheckBox);
+    serviceGrid->addItem(m_systemForwardingCheckBox);
+    serviceGrid->addItem(m_acceptDnsCheckBox);
+
+    scrollLayout->addWidget(serviceGrid);
+
+    // ========== 网络白名单 ==========
+    QWidget *whitelistWidget = new QWidget(scrollContent);
+    QVBoxLayout *whitelistLayout = new QVBoxLayout(whitelistWidget);
+    whitelistLayout->setContentsMargins(15, 5, 15, 10);
+
+    m_foreignNetworkWhitelistCheckBox = new LDETCheckBtn(whitelistWidget);
+    m_foreignNetworkWhitelistCheckBox->setText(tr("启用网络白名单"));
+    m_foreignNetworkWhitelistCheckBox->setToolTip(tr("仅转发网络白名单中VPN的流量, 留空则为不转发任何网络的流量"));
+    m_foreignNetworkWhitelistCheckBox->setChecked(false);
+    m_foreignNetworkWhitelistCheckBox->setBorderless(true);
+    m_foreignNetworkWhitelistCheckBox->setMaximumWidth(160);
+    whitelistLayout->addWidget(m_foreignNetworkWhitelistCheckBox);
+
+    // 白名单控件容器
+    QWidget *whitelistControlsWidget = new QWidget(whitelistWidget);
+    QVBoxLayout *whitelistControlsLayout = new QVBoxLayout(whitelistControlsWidget);
+    whitelistControlsLayout->setContentsMargins(0, 0, 0, 0);
+
+    QHBoxLayout *addWhitelistLayout = new QHBoxLayout();
+    m_foreignNetworkWhitelistEdit = new LDETLineEdit(whitelistControlsWidget);
+    m_foreignNetworkWhitelistEdit->setPlaceholderText(tr("请输入网络名称"));
+    m_addWhitelistBtn = new LDETPushBtn(tr("添加"), whitelistControlsWidget);
+    m_addWhitelistBtn->setMinimumWidth(80);
+    m_addWhitelistBtn->setIcon(QIcon(QStringLiteral(":/icons/add.svg")));
+    addWhitelistLayout->addWidget(m_foreignNetworkWhitelistEdit, 1);
+    addWhitelistLayout->addWidget(m_addWhitelistBtn);
+    whitelistControlsLayout->addLayout(addWhitelistLayout);
+
+    QHBoxLayout *whitelistListLayout = new QHBoxLayout();
+    m_whitelistListWidget = new QListWidget(whitelistControlsWidget);
+    m_whitelistListWidget->setMinimumHeight(80);
+    m_removeWhitelistBtn = new LDETPushBtn(tr("删除"), whitelistControlsWidget);
+    m_removeWhitelistBtn->setMinimumWidth(80);
+    m_removeWhitelistBtn->setIcon(QIcon(QStringLiteral(":/icons/delete.svg")));
+    m_removeWhitelistBtn->setEnabled(false);
+    whitelistListLayout->addWidget(m_whitelistListWidget, 1);
+    whitelistListLayout->addWidget(m_removeWhitelistBtn);
+    whitelistControlsLayout->addLayout(whitelistListLayout);
+
+    whitelistControlsWidget->setVisible(false);
+    whitelistLayout->addWidget(whitelistControlsWidget);
+
+    scrollLayout->addWidget(whitelistWidget);
+
+    // ========== 监听地址 ==========
+    scrollLayout->addWidget(createSectionTitle(tr("监听地址")));
+
+    QWidget *listenAddrWidget = new QWidget(scrollContent);
+    QVBoxLayout *listenAddrLayout = new QVBoxLayout(listenAddrWidget);
+    listenAddrLayout->setContentsMargins(15, 5, 15, 0);
+
+    QHBoxLayout *addListenAddrLayout = new QHBoxLayout();
+    m_listenAddrEdit = new LDETLineEdit(listenAddrWidget);
+    m_listenAddrEdit->setPlaceholderText(tr("请输入监听地址与端口"));
+    m_addListenAddrBtn = new LDETPushBtn(tr("添加"), listenAddrWidget);
+    m_addListenAddrBtn->setMinimumWidth(80);
+    m_addListenAddrBtn->setIcon(QIcon(QStringLiteral(":/icons/add.svg")));
+    addListenAddrLayout->addWidget(m_listenAddrEdit, 1);
+    addListenAddrLayout->addWidget(m_addListenAddrBtn);
+    listenAddrLayout->addLayout(addListenAddrLayout);
+
+    QHBoxLayout *listenAddrListLayout = new QHBoxLayout();
+    m_listenAddrListWidget = new QListWidget(listenAddrWidget);
+    m_listenAddrListWidget->setMinimumHeight(80);
+
+    m_removeListenAddrBtn = new LDETPushBtn(tr("删除"), listenAddrWidget);
+    m_removeListenAddrBtn->setMinimumWidth(80);
+    m_removeListenAddrBtn->setIcon(QIcon(QStringLiteral(":/icons/delete.svg")));
+    m_removeListenAddrBtn->setEnabled(false);
+    listenAddrListLayout->addWidget(m_listenAddrListWidget, 1);
+    listenAddrListLayout->addWidget(m_removeListenAddrBtn);
+    listenAddrLayout->addLayout(listenAddrListLayout);
+
+    scrollLayout->addWidget(listenAddrWidget);
+
+    // ========== 子网代理 ==========
+    scrollLayout->addWidget(createSectionTitle(tr("子网代理")));
+
+    QWidget *cidrWidget = new QWidget(scrollContent);
+    QVBoxLayout *cidrLayout = new QVBoxLayout(cidrWidget);
+    cidrLayout->setContentsMargins(15, 5, 15, 15);
+
+    QLabel *cidrDesc = new QLabel(tr("输入想要进行子网代理的IP范围，CIDR格式"), cidrWidget);
+    cidrDesc->setContentsMargins(0, 0, 0, 4);
+    cidrLayout->addWidget(cidrDesc);
+
+    QHBoxLayout *addCidrLayout = new QHBoxLayout();
+    m_proxyNetworkEdit = new LDETLineEdit(cidrWidget);
+    m_proxyNetworkEdit->setPlaceholderText(tr("请输入子网代理 CIDR"));
+    m_addProxyNetworkBtn = new LDETPushBtn(tr("添加"), cidrWidget);
+    m_addProxyNetworkBtn->setMinimumWidth(80);
+    m_addProxyNetworkBtn->setIcon(QIcon(QStringLiteral(":/icons/add.svg")));
+    addCidrLayout->addWidget(m_proxyNetworkEdit, 1);
+    addCidrLayout->addWidget(m_addProxyNetworkBtn);
+    cidrLayout->addLayout(addCidrLayout);
+
+    QHBoxLayout *cidrListLayout = new QHBoxLayout();
+    m_proxyNetworkListWidget = new QListWidget(cidrWidget);
+    m_proxyNetworkListWidget->setMinimumHeight(80);
+    m_removeProxyNetworkBtn = new LDETPushBtn(tr("删除"), cidrWidget);
+    m_removeProxyNetworkBtn->setMinimumWidth(80);
+    m_removeProxyNetworkBtn->setIcon(QIcon(QStringLiteral(":/icons/delete.svg")));
+    m_removeProxyNetworkBtn->setEnabled(false);
+    cidrListLayout->addWidget(m_proxyNetworkListWidget, 1);
+    cidrListLayout->addWidget(m_removeProxyNetworkBtn);
+    cidrLayout->addLayout(cidrListLayout);
+
+    m_calculateCidrBtn = new LDETPushBtn(tr("打开 CIDR 计算器"), cidrWidget);
+    cidrLayout->addWidget(m_calculateCidrBtn);
+
+    scrollLayout->addWidget(cidrWidget);
+
+    // ========== 自定义路由规则 ==========
+    scrollLayout->addWidget(createSectionTitle(tr("自定义路由规则")));
+
+    QWidget *customRouteWidget = new QWidget(scrollContent);
+    QVBoxLayout *customRouteLayout = new QVBoxLayout(customRouteWidget);
+    customRouteLayout->setContentsMargins(15, 5, 15, 15);
+
+    QLabel *customRouteDesc = new QLabel(tr("自定义进入 VPN 的路由，将禁用子网代理等自动传播的路由。"), customRouteWidget);
+    customRouteDesc->setContentsMargins(0, 0, 0, 4);
+    customRouteLayout->addWidget(customRouteDesc);
+
+    QHBoxLayout *addCustomRouteLayout = new QHBoxLayout();
+    m_customRouteEdit = new LDETLineEdit(customRouteWidget);
+    m_customRouteEdit->setPlaceholderText(tr("示例(CIDR格式)：192.168.188.0/24"));
+    m_addCustomRouteBtn = new LDETPushBtn(tr("添加"), customRouteWidget);
+    m_addCustomRouteBtn->setMinimumWidth(80);
+    m_addCustomRouteBtn->setIcon(QIcon(QStringLiteral(":/icons/add.svg")));
+    addCustomRouteLayout->addWidget(m_customRouteEdit, 1);
+    addCustomRouteLayout->addWidget(m_addCustomRouteBtn);
+    customRouteLayout->addLayout(addCustomRouteLayout);
+
+    QHBoxLayout *customRouteListLayout = new QHBoxLayout();
+    m_customRouteListWidget = new QListWidget(customRouteWidget);
+    m_customRouteListWidget->setMinimumHeight(80);
+    m_removeCustomRouteBtn = new LDETPushBtn(tr("删除"), customRouteWidget);
+    m_removeCustomRouteBtn->setMinimumWidth(80);
+    m_removeCustomRouteBtn->setIcon(QIcon(QStringLiteral(":/icons/delete.svg")));
+    m_removeCustomRouteBtn->setEnabled(false);
+    customRouteListLayout->addWidget(m_customRouteListWidget, 1);
+    customRouteListLayout->addWidget(m_removeCustomRouteBtn);
+    customRouteLayout->addLayout(customRouteListLayout);
+
+    scrollLayout->addWidget(customRouteWidget);
+
+    // ========== 出口节点列表 ==========
+    scrollLayout->addWidget(createSectionTitle(tr("出口节点列表")));
+
+    QWidget *exitNodeWidget = new QWidget(scrollContent);
+    QVBoxLayout *exitNodeLayout = new QVBoxLayout(exitNodeWidget);
+    exitNodeLayout->setContentsMargins(15, 5, 15, 15);
+
+    QHBoxLayout *addExitNodeLayout = new QHBoxLayout();
+    m_exitNodeEdit = new LDETLineEdit(exitNodeWidget);
+    m_exitNodeEdit->setPlaceholderText(tr("请输入出口节点地址"));
+    m_addExitNodeBtn = new LDETPushBtn(tr("添加"), exitNodeWidget);
+    m_addExitNodeBtn->setMinimumWidth(80);
+    m_addExitNodeBtn->setIcon(QIcon(QStringLiteral(":/icons/add.svg")));
+    addExitNodeLayout->addWidget(m_exitNodeEdit, 1);
+    addExitNodeLayout->addWidget(m_addExitNodeBtn);
+    exitNodeLayout->addLayout(addExitNodeLayout);
+
+    QHBoxLayout *exitNodeListLayout = new QHBoxLayout();
+    m_exitNodeListWidget = new QListWidget(exitNodeWidget);
+    m_exitNodeListWidget->setMinimumHeight(80);
+    m_removeExitNodeBtn = new LDETPushBtn(tr("删除"), exitNodeWidget);
+    m_removeExitNodeBtn->setMinimumWidth(80);
+    m_removeExitNodeBtn->setIcon(QIcon(QStringLiteral(":/icons/delete.svg")));
+    m_removeExitNodeBtn->setEnabled(false);
+    exitNodeListLayout->addWidget(m_exitNodeListWidget, 1);
+    exitNodeListLayout->addWidget(m_removeExitNodeBtn);
+    exitNodeLayout->addLayout(exitNodeListLayout);
+
+    scrollLayout->addWidget(exitNodeWidget);
+
+    // 添加垂直伸展空间
+    scrollLayout->addStretch();
+
+    // 设置滚动区内容
+    scrollArea->setWidget(scrollContent);
+
+    // 将滚动区添加到高级设置页面
+    QVBoxLayout *pageLayout = new QVBoxLayout(m_advancedSettingsTab);
+    pageLayout->setContentsMargins(0, 0, 0, 0);
+    pageLayout->addWidget(scrollArea);
+
+    // 设置列表控件的字体为 UbuntuMono
+    int fontId = QFontDatabase::addApplicationFont(QStringLiteral(":/icons/UbuntuMono-B.ttf"));
+    if (fontId != -1) {
+        QStringList fontFamilies = QFontDatabase::applicationFontFamilies(fontId);
+        if (!fontFamilies.isEmpty()) {
+            QFont monoFont(fontFamilies.first());
+            monoFont.setPointSize(11);
+            m_listenAddrListWidget->setFont(monoFont);
+            m_whitelistListWidget->setFont(monoFont);
+            m_proxyNetworkListWidget->setFont(monoFont);
+            m_customRouteListWidget->setFont(monoFont);
+            m_exitNodeListWidget->setFont(monoFont);
+        }
+    }
+
+    // 连接信号槽
+    connect(m_foreignNetworkWhitelistCheckBox, &LDETCheckBtn::toggled, this, [this, whitelistControlsWidget](bool checked) {
+        whitelistControlsWidget->setVisible(checked);
+        m_foreignNetworkWhitelistEdit->setEnabled(checked);
+        m_addWhitelistBtn->setEnabled(checked);
+        m_whitelistListWidget->setEnabled(checked);
+    });
+    connect(m_listenAddrListWidget, &QListWidget::itemSelectionChanged, this, [this]() {
+        m_removeListenAddrBtn->setEnabled(m_listenAddrListWidget->currentRow() >= 0);
+    });
+    connect(m_whitelistListWidget, &QListWidget::itemSelectionChanged, this, [this]() {
+        if (m_foreignNetworkWhitelistCheckBox->isChecked()) {
+            m_removeWhitelistBtn->setEnabled(m_whitelistListWidget->currentRow() >= 0);
+        }
+    });
+    connect(m_proxyNetworkListWidget, &QListWidget::itemSelectionChanged, this, [this]() {
+        m_removeProxyNetworkBtn->setEnabled(m_proxyNetworkListWidget->currentRow() >= 0);
+    });
+    connect(m_customRouteListWidget, &QListWidget::itemSelectionChanged, this, [this]() {
+        m_removeCustomRouteBtn->setEnabled(m_customRouteListWidget->currentRow() >= 0);
+    });
+    connect(m_exitNodeListWidget, &QListWidget::itemSelectionChanged, this, [this]() {
+        m_removeExitNodeBtn->setEnabled(m_exitNodeListWidget->currentRow() >= 0);
+    });
+}
+
+void LDETNetwork::initRunningStatusPage()
+{
+    QVBoxLayout *layout = new QVBoxLayout(m_runningStatusTab);
+    layout->setContentsMargins(10, 20, 10, 20);
+
+    m_statusLabel = new QLabel(tr("请先点击运行网络"), m_runningStatusTab);
+    QFont titleLabelFont = m_statusLabel->font();
+    titleLabelFont.setPointSize(12);
+    titleLabelFont.setWeight(QFont::Bold);
+    m_statusLabel->setFont(titleLabelFont);
+    layout->addWidget(m_statusLabel);
+
+    // 创建节点信息容器（带滚动区域）
+    QScrollArea *scrollArea = new QScrollArea(m_runningStatusTab);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+    // 设置透明背景
+    scrollArea->setAutoFillBackground(false);
+    scrollArea->viewport()->setAutoFillBackground(false);
+
+    LDETSmoothScroll::install(scrollArea);
+
+    m_nodeInfoContainer = new QWidget(scrollArea);
+    m_nodeInfoContainer->setAutoFillBackground(false);
+    m_nodeInfoLayout = new QVBoxLayout(m_nodeInfoContainer);
+    m_nodeInfoLayout->setContentsMargins(0, 10, 0, 0);
+    m_nodeInfoLayout->setSpacing(8);
+
+    // 空状态提示标签
+    m_emptyLabel = new QLabel(tr("空空如也"), m_nodeInfoContainer);
+    QFont emptyFont = m_emptyLabel->font();
+    emptyFont.setPointSize(24);
+    m_emptyLabel->setFont(emptyFont);
+    m_emptyLabel->setAlignment(Qt::AlignCenter);
+    m_emptyLabel->setStyleSheet(QStringLiteral("color: #888888;"));
+    m_emptyLabel->hide();  // 默认隐藏
+    m_nodeInfoLayout->addWidget(m_emptyLabel, 1);
+
+    m_nodeInfoLayout->addStretch();
+
+    scrollArea->setWidget(m_nodeInfoContainer);
+    layout->addWidget(scrollArea);
+}
+
+void LDETNetwork::initRunningLogPage()
+{
+    QVBoxLayout *layout = new QVBoxLayout(m_runningLogTab);
+    layout->setContentsMargins(5, 5, 5, 5);
+
+    // 创建日志文本框
+    m_logTextEdit = new QTextEdit(m_runningLogTab);
+    m_logTextEdit->setReadOnly(true);
+    m_logTextEdit->setLineWrapMode(QTextEdit::WidgetWidth);  // 自动换行
+    m_logTextEdit->setPlaceholderText(tr("运行日志将在此显示..."));
+
+    LDETSmoothScroll::install(m_logTextEdit);
+    
+    // 设置 UbuntuMono 字体
+    int fontId = QFontDatabase::addApplicationFont(QStringLiteral(":/icons/UbuntuMono-B.ttf"));
+    if (fontId != -1) {
+        QStringList fontFamilies = QFontDatabase::applicationFontFamilies(fontId);
+        if (!fontFamilies.isEmpty()) {
+            QFont monoFont(fontFamilies.first());
+            monoFont.setPointSize(11);
+            m_logTextEdit->setFont(monoFont);
+        }
+    }
+    
+    // 设置透明背景（使用调色板）
+    m_logTextEdit->setAutoFillBackground(false);
+    QPalette logPalette = m_logTextEdit->palette();
+    logPalette.setColor(QPalette::Base, Qt::transparent);
+    // 根据当前主题设置文字颜色
+    const bool isDark = (qApp->styleHints()->colorScheme() == Qt::ColorScheme::Dark);
+    logPalette.setColor(QPalette::Text, isDark ? QColor(0xd4, 0xd4, 0xd4) : QColor(0x30, 0x30, 0x30));
+    m_logTextEdit->setPalette(logPalette);
+
+    // 监听主题变化，更新日志文字颜色
+    connect(qApp->styleHints(), &QStyleHints::colorSchemeChanged, this, [this]() {
+        QPalette palette = m_logTextEdit->palette();
+        const bool dark = (qApp->styleHints()->colorScheme() == Qt::ColorScheme::Dark);
+        palette.setColor(QPalette::Text, dark ? QColor(0xd4, 0xd4, 0xd4) : QColor(0x30, 0x30, 0x30));
+        m_logTextEdit->setPalette(palette);
+    });
+
+    // 设置样式（边框和圆角）
+    m_logTextEdit->setStyleSheet(QStringLiteral(
+        "QTextEdit {"
+        "  border: 1px solid #3c3c3c;"
+        "  border-radius: 5px;"
+        "}"
+    ));
+    
+    layout->addWidget(m_logTextEdit);
+}
+
+// ==================== 网络配置管理方法 ====================
+
+void LDETNetwork::onNewNetwork()
+{
+    // 创建新的网络配置（构造函数会自动初始化 instanceName 和默认值）
+    NetworkConf newConf;
+    
+    // 添加到配置列表
+    m_networkConfs.push_back(std::move(newConf));
+    
+    // 在列表中添加新项
+    const int index = static_cast<int>(m_networkConfs.size()) - 1;
+    const QString displayName = getNetworkDisplayName(index);
+    m_networksList->addItem(displayName);
+    
+    // 设置默认图标（未运行状态）
+    updateListItemStyle(index);
+    
+    // 选中新添加的项
+    m_networksList->setCurrentRow(index);
+    
+    // 更新 TabWidget 状态
+    updateTabWidgetState();
+}
+
+void LDETNetwork::onNetworkSelected()
+{
+    int currentRow = m_networksList->currentRow();
+    
+    // 更新 TabWidget 状态
+    updateTabWidgetState();
+    
+    // 如果有选中的项，加载对应的配置到UI
+    if (currentRow >= 0 && currentRow < static_cast<int>(m_networkConfs.size())) {
+        loadConfToUI(currentRow);
+        
+        // 清空当前节点信息显示
+        for (LDETNodeInfo *widget : m_nodeInfoWidgets) {
+            m_nodeInfoLayout->removeWidget(widget);
+            widget->hide();
+            widget->deleteLater();
+        }
+        m_nodeInfoWidgets.clear();
+        
+        // 根据网络运行状态更新节点信息显示
+        if (m_networkConfs[currentRow].isRunning()) {
+            // 如果有缓存的节点信息，直接显示；否则显示加载中
+            if (!m_networkConfs[currentRow].m_runningStatus.isEmpty()) {
+                updateCurrentNetworkUI();
+            } else {
+                // 没有节点信息时显示"空空如也"
+                m_statusLabel->setText(NodeStatusText::NO_NODES);
+                m_emptyLabel->show();
+                // 清空现有节点控件
+                for (LDETNodeInfo *widget : m_nodeInfoWidgets) {
+                    m_nodeInfoLayout->removeWidget(widget);
+                    widget->hide();
+                    widget->deleteLater();
+                }
+                m_nodeInfoWidgets.clear();
+                m_nodeInfoLayout->activate();
+                m_nodeInfoContainer->update();
+            }
+            // 更新日志显示
+            updateCurrentNetworkLogUI();
+            // 立即请求更新节点信息
+            if (m_runWorker) {
+                QMetaObject::invokeMethod(m_runWorker, "collectInfos", Qt::QueuedConnection);
+            }
+        } else {
+            // 网络未运行时，没有节点信息也显示"空空如也"
+            m_statusLabel->setText(NodeStatusText::NO_NODES_NOT_RUNNING);
+            m_emptyLabel->show();
+            // 清空现有节点控件
+            for (LDETNodeInfo *widget : m_nodeInfoWidgets) {
+                m_nodeInfoLayout->removeWidget(widget);
+                widget->hide();
+                widget->deleteLater();
+            }
+            m_nodeInfoWidgets.clear();
+            m_nodeInfoLayout->activate();
+            m_nodeInfoContainer->update();
+            // 网络未运行时显示缓存的日志
+            updateCurrentNetworkLogUI();
+        }
+    }
+    
+    // 更新运行按钮样式
+    updateRunButtonStyle();
+}
+
+void LDETNetwork::onListContextMenu(const QPoint &pos)
+{
+    LDETLabelListItem *item = m_networksList->itemAt(pos);
+    if (!item) {
+        return;
+    }
+    
+    QMenu contextMenu(tr("网络操作"), this);
+    QAction *renameAction = contextMenu.addAction(tr("重命名"));
+    renameAction->setIcon(QIcon(QStringLiteral(":/icons/edit.svg")));
+    QAction *deleteAction = contextMenu.addAction(tr("删除网络"));
+    deleteAction->setIcon(QIcon(QStringLiteral(":/icons/delete.svg")));
+    
+    QAction *selectedAction = contextMenu.exec(m_networksList->mapToGlobal(pos));
+    
+    if (selectedAction == renameAction) {
+        onRenameNetwork();
+    } else if (selectedAction == deleteAction) {
+        onDeleteNetwork();
+    }
+}
+
+void LDETNetwork::onDeleteNetwork()
+{
+    int currentRow = m_networksList->currentRow();
+    if (currentRow < 0 || currentRow >= static_cast<int>(m_networkConfs.size())) {
+        return;
+    }
+    
+    NetworkConf &conf = m_networkConfs[currentRow];
+    const bool isRunning = conf.isRunning();
+    
+    // 弹出确认框
+    QMessageBox msgBox(this);
+    msgBox.setWindowTitle(tr("确认删除"));
+    msgBox.setText(tr("确定要删除网络 \"%1\" 吗？").arg(m_networksList->item(currentRow)->text()));
+    if (isRunning) {
+        msgBox.setInformativeText(tr("该网络正在运行中，删除前将自动停止该网络。\n删除后无法恢复。"));
+    } else {
+        msgBox.setInformativeText(tr("删除后无法恢复。"));
+    }
+    msgBox.setStandardButtons(QMessageBox::Ok | QMessageBox::Cancel);
+    msgBox.setDefaultButton(QMessageBox::Cancel);
+    msgBox.setIcon(QMessageBox::Warning);
+    
+    if (msgBox.exec() != QMessageBox::Ok) {
+        return;
+    }
+    
+    // 如果网络正在运行，先强制停止
+    if (isRunning) {
+        // 显示进度对话框
+        if (!m_progressDialog) {
+            m_progressDialog = new QProgressDialog(this);
+            m_progressDialog->setWindowModality(Qt::WindowModal);
+            m_progressDialog->setCancelButton(nullptr);
+            m_progressDialog->setRange(0, 0);
+        }
+        m_progressDialog->setLabelText(tr("正在停止网络 \"%1\"...").arg(m_networksList->item(currentRow)->text()));
+        m_progressDialog->show();
+        QCoreApplication::processEvents();
+
+        if (!stopNetworkAndWait(conf.getInstanceName(), 10000)) {
+            if (m_progressDialog) {
+                m_progressDialog->hide();
+            }
+            QMessageBox::warning(this, tr("删除失败"),
+                                 tr("无法停止网络 \"%1\"，删除已取消。请稍后重试。")
+                                     .arg(m_networksList->item(currentRow)->text()));
+            return;
+        }
+
+        // 隐藏进度对话框
+        if (m_progressDialog) {
+            m_progressDialog->hide();
+        }
+    }
+    
+    // 从配置列表中删除
+    m_networkConfs.erase(m_networkConfs.begin() + currentRow);
+    
+    // 从列表中删除
+    delete m_networksList->takeItem(currentRow);
+    
+    // 更新列表项显示名称（索引值可能变化）
+    for (int i = 0; i < m_networksList->count(); ++i) {
+        m_networksList->item(i)->setText(getNetworkDisplayName(i));
+    }
+    
+    // 更新 TabWidget 状态
+    updateTabWidgetState();
+    
+    // 如果还有网络，选中第一个
+    if (m_networksList->count() > 0) {
+        m_networksList->setCurrentRow(0);
+    }
+    
+    // 保存配置
+    saveAllNetworkConfs();
+}
+
+void LDETNetwork::onUIChanged()
+{
+    int currentRow = m_networksList->currentRow();
+    if (currentRow >= 0 && currentRow < static_cast<int>(m_networkConfs.size())) {
+        saveConfFromUI(currentRow);
+    }
+}
+
+void LDETNetwork::loadConfToUI(int index) const
+{
+    if (index < 0 || index >= static_cast<int>(m_networkConfs.size())) {
+        return;
+    }
+    
+    const NetworkConf &conf = m_networkConfs[index];
+    
+    // 阻塞信号，避免循环触发
+    m_hostnameEdit->blockSignals(true);
+    m_networkNameEdit->blockSignals(true);
+    m_networkSecretEdit->blockSignals(true);
+    m_dhcpCheckBox->blockSignals(true);
+    m_ipv4Edit->blockSignals(true);
+    m_latencyFirstCheckBox->blockSignals(true);
+    m_privateModeCheckBox->blockSignals(true);
+    m_serverListWidget->blockSignals(true);
+    m_foreignNetworkWhitelistCheckBox->blockSignals(true);
+    m_whitelistListWidget->blockSignals(true);
+    m_listenAddrListWidget->blockSignals(true);
+    m_proxyNetworkListWidget->blockSignals(true);
+    m_customRouteListWidget->blockSignals(true);
+    m_exitNodeListWidget->blockSignals(true);
+    m_enableKcpProxyCheckBox->blockSignals(true);
+    m_disableKcpInputCheckBox->blockSignals(true);
+    m_noTunCheckBox->blockSignals(true);
+    m_enableQuicProxyCheckBox->blockSignals(true);
+    m_disableQuicInputCheckBox->blockSignals(true);
+    m_disableRelayKcpCheckBox->blockSignals(true);
+    m_disableRelayQuicCheckBox->blockSignals(true);
+    m_enableRelayForeignNetworkKcpCheckBox->blockSignals(true);
+    m_enableRelayForeignNetworkQuicCheckBox->blockSignals(true);
+    m_disableUdpHolePunchingCheckBox->blockSignals(true);
+    m_disableTcpHolePunchingCheckBox->blockSignals(true);
+    m_disableUpnpCheckBox->blockSignals(true);
+    m_needP2pCheckBox->blockSignals(true);
+    m_lazyP2pCheckBox->blockSignals(true);
+    m_p2pOnlyCheckBox->blockSignals(true);
+    m_multiThreadCheckBox->blockSignals(true);
+    m_useSmoltcpCheckBox->blockSignals(true);
+    m_bindDeviceCheckBox->blockSignals(true);
+    m_disableP2pCheckBox->blockSignals(true);
+    m_enableExitNodeCheckBox->blockSignals(true);
+    m_systemForwardingCheckBox->blockSignals(true);
+    m_disableSymHolePunchingCheckBox->blockSignals(true);
+    m_disableIpv6CheckBox->blockSignals(true);
+    m_relayAllPeerRpcCheckBox->blockSignals(true);
+    m_enableEncryptionCheckBox->blockSignals(true);
+    m_acceptDnsCheckBox->blockSignals(true);
+    m_devNameEdit->blockSignals(true);
+    m_mtuEdit->blockSignals(true);
+    m_defaultProtocolCombo->blockSignals(true);
+    m_encryptionAlgorithmCombo->blockSignals(true);
+    
+    // 基础设置
+    m_hostnameEdit->setText(QString::fromStdString(conf.m_hostname));
+    m_networkNameEdit->setText(QString::fromStdString(conf.m_networkName));
+    m_networkSecretEdit->setText(QString::fromStdString(conf.m_networkSecret));
+    m_dhcpCheckBox->setChecked(conf.m_dhcp);
+    m_ipv4Edit->setText(QString::fromStdString(conf.m_ipv4));
+    m_ipv4Edit->setEnabled(!conf.m_dhcp);
+    m_latencyFirstCheckBox->setChecked(conf.m_latencyFirst);
+    m_privateModeCheckBox->setChecked(conf.m_privateMode);
+    
+    // 服务器列表
+    m_serverListWidget->clear();
+    for (const auto &server : conf.m_servers) {
+        m_serverListWidget->addItem(QString::fromStdString(server));
+    }
+    
+    // 高级设置 - 功能开关
+    m_enableKcpProxyCheckBox->setChecked(conf.m_enableKcpProxy);
+    m_disableKcpInputCheckBox->setChecked(conf.m_disableKcpInput);
+    m_noTunCheckBox->setChecked(conf.m_noTun);
+    m_enableQuicProxyCheckBox->setChecked(conf.m_enableQuicProxy);
+    m_disableQuicInputCheckBox->setChecked(conf.m_disableQuicInput);
+    m_disableRelayKcpCheckBox->setChecked(conf.m_disableRelayKcp);
+    m_disableRelayQuicCheckBox->setChecked(conf.m_disableRelayQuic);
+    m_enableRelayForeignNetworkKcpCheckBox->setChecked(conf.m_enableRelayForeignNetworkKcp);
+    m_enableRelayForeignNetworkQuicCheckBox->setChecked(conf.m_enableRelayForeignNetworkQuic);
+    m_disableUdpHolePunchingCheckBox->setChecked(conf.m_disableUdpHolePunching);
+    m_disableTcpHolePunchingCheckBox->setChecked(conf.m_disableTcpHolePunching);
+    m_disableUpnpCheckBox->setChecked(conf.m_disableUpnp);
+    m_needP2pCheckBox->setChecked(conf.m_needP2p);
+    m_lazyP2pCheckBox->setChecked(conf.m_lazyP2p);
+    m_p2pOnlyCheckBox->setChecked(conf.m_p2pOnly);
+    m_multiThreadCheckBox->setChecked(conf.m_multiThread);
+    m_useSmoltcpCheckBox->setChecked(conf.m_useSmoltcp);
+    m_bindDeviceCheckBox->setChecked(conf.m_bindDevice);
+    m_disableP2pCheckBox->setChecked(conf.m_disableP2p);
+    m_enableExitNodeCheckBox->setChecked(conf.m_enableExitNode);
+    m_systemForwardingCheckBox->setChecked(conf.m_systemForwarding);
+    m_disableSymHolePunchingCheckBox->setChecked(conf.m_disableSymHolePunching);
+    m_disableIpv6CheckBox->setChecked(conf.m_disableIpv6);
+    m_relayAllPeerRpcCheckBox->setChecked(conf.m_relayAllPeerRpc);
+    m_enableEncryptionCheckBox->setChecked(conf.m_enableEncryption);
+    m_acceptDnsCheckBox->setChecked(conf.m_acceptDns);
+
+    m_devNameEdit->setText(QString::fromStdString(conf.m_devName));
+    m_mtuEdit->setText(conf.m_mtu > 0 ? QString::number(conf.m_mtu) : QString());
+
+    // 协议与加密下拉框
+    int protoIdx = m_defaultProtocolCombo->findData(static_cast<int>(conf.m_defaultProtocol));
+    m_defaultProtocolCombo->setCurrentIndex(protoIdx >= 0 ? protoIdx : 0);
+    int encIdx = m_encryptionAlgorithmCombo->findData(static_cast<int>(conf.m_encryptionAlgorithm));
+    m_encryptionAlgorithmCombo->setCurrentIndex(encIdx >= 0 ? encIdx : 0);
+
+    // 网络白名单
+    m_foreignNetworkWhitelistCheckBox->setChecked(conf.m_foreignNetworkWhitelistEnabled);
+    m_whitelistListWidget->clear();
+    for (const auto &item : conf.m_foreignNetworkWhitelist) {
+        m_whitelistListWidget->addItem(QString::fromStdString(item));
+    }
+    
+    // 监听地址
+    m_listenAddrListWidget->clear();
+    for (const auto &addr : conf.m_listenAddresses) {
+        m_listenAddrListWidget->addItem(QString::fromStdString(addr));
+    }
+    
+    // 子网代理 CIDR
+    m_proxyNetworkListWidget->clear();
+    for (const auto &cidr : conf.m_proxyNetworks) {
+        m_proxyNetworkListWidget->addItem(QString::fromStdString(cidr));
+    }
+
+    // 自定义路由规则
+    m_customRouteListWidget->clear();
+    for (const auto &route : conf.m_customRoutes) {
+        m_customRouteListWidget->addItem(QString::fromStdString(route));
+    }
+
+    // 出口节点列表
+    m_exitNodeListWidget->clear();
+    for (const auto &node : conf.m_exitNodes) {
+        m_exitNodeListWidget->addItem(QString::fromStdString(node));
+    }
+    
+    // 恢复信号
+    m_hostnameEdit->blockSignals(false);
+    m_networkNameEdit->blockSignals(false);
+    m_networkSecretEdit->blockSignals(false);
+    m_dhcpCheckBox->blockSignals(false);
+    m_ipv4Edit->blockSignals(false);
+    m_latencyFirstCheckBox->blockSignals(false);
+    m_privateModeCheckBox->blockSignals(false);
+    m_serverListWidget->blockSignals(false);
+    m_foreignNetworkWhitelistCheckBox->blockSignals(false);
+    m_whitelistListWidget->blockSignals(false);
+    m_listenAddrListWidget->blockSignals(false);
+    m_proxyNetworkListWidget->blockSignals(false);
+    m_customRouteListWidget->blockSignals(false);
+    m_exitNodeListWidget->blockSignals(false);
+    m_enableKcpProxyCheckBox->blockSignals(false);
+    m_disableKcpInputCheckBox->blockSignals(false);
+    m_noTunCheckBox->blockSignals(false);
+    m_enableQuicProxyCheckBox->blockSignals(false);
+    m_disableQuicInputCheckBox->blockSignals(false);
+    m_disableRelayKcpCheckBox->blockSignals(false);
+    m_disableRelayQuicCheckBox->blockSignals(false);
+    m_enableRelayForeignNetworkKcpCheckBox->blockSignals(false);
+    m_enableRelayForeignNetworkQuicCheckBox->blockSignals(false);
+    m_disableUdpHolePunchingCheckBox->blockSignals(false);
+    m_disableTcpHolePunchingCheckBox->blockSignals(false);
+    m_disableUpnpCheckBox->blockSignals(false);
+    m_needP2pCheckBox->blockSignals(false);
+    m_lazyP2pCheckBox->blockSignals(false);
+    m_p2pOnlyCheckBox->blockSignals(false);
+    m_multiThreadCheckBox->blockSignals(false);
+    m_useSmoltcpCheckBox->blockSignals(false);
+    m_bindDeviceCheckBox->blockSignals(false);
+    m_disableP2pCheckBox->blockSignals(false);
+    m_enableExitNodeCheckBox->blockSignals(false);
+    m_systemForwardingCheckBox->blockSignals(false);
+    m_disableSymHolePunchingCheckBox->blockSignals(false);
+    m_disableIpv6CheckBox->blockSignals(false);
+    m_relayAllPeerRpcCheckBox->blockSignals(false);
+    m_enableEncryptionCheckBox->blockSignals(false);
+    m_acceptDnsCheckBox->blockSignals(false);
+    m_devNameEdit->blockSignals(false);
+    m_mtuEdit->blockSignals(false);
+    m_defaultProtocolCombo->blockSignals(false);
+    m_encryptionAlgorithmCombo->blockSignals(false);
+}
+
+void LDETNetwork::saveConfFromUI(int index)
+{
+    if (index < 0 || index >= static_cast<int>(m_networkConfs.size())) {
+        return;
+    }
+    // 直接调用 readFromUI 读取当前 UI 数据
+    m_networkConfs[index].readFromUI(this);
+}
+
+void LDETNetwork::updateTabWidgetState() const
+{
+    const bool hasSelection = m_networksList->currentRow() >= 0 && m_networksList->count() > 0;
+    m_tabWidget->setEnabled(hasSelection);
+}
+
+void LDETNetwork::setupUIConnections()
+{
+    // 基础设置控件
+    connect(m_hostnameEdit, &QLineEdit::textChanged, this, &LDETNetwork::onUIChanged);
+    connect(m_networkNameEdit, &QLineEdit::textChanged, this, &LDETNetwork::onUIChanged);
+    connect(m_networkSecretEdit, &QLineEdit::textChanged, this, &LDETNetwork::onUIChanged);
+    connect(m_dhcpCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_ipv4Edit, &QLineEdit::textChanged, this, &LDETNetwork::onUIChanged);
+    connect(m_latencyFirstCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_privateModeCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    
+    // 服务器列表变化
+    connect(m_addServerBtn, &QPushButton::clicked, this, [this]() {
+        QString server = m_serverEdit->text().trimmed();
+        if (!server.isEmpty()) {
+            m_serverListWidget->addItem(server);
+            m_serverEdit->clear();
+            onUIChanged();
+        }
+    });
+    connect(m_removeServerBtn, &QPushButton::clicked, this, [this]() {
+        QListWidgetItem *item = m_serverListWidget->currentItem();
+        if (item) {
+            delete m_serverListWidget->takeItem(m_serverListWidget->row(item));
+            onUIChanged();
+        }
+    });
+    
+    // 公共服务器列表按钮
+    connect(m_publicServerBtn, &QPushButton::clicked, this, [this]() {
+        LDETServersDialog dialog(this);
+        
+        // 获取当前服务器列表
+        QStringList currentServers;
+        for (int i = 0; i < m_serverListWidget->count(); ++i) {
+            currentServers.append(m_serverListWidget->item(i)->text());
+        }
+        dialog.setSelectedServers(currentServers);
+        
+        if (dialog.exec() == QDialog::Accepted) {
+            // 获取用户选择的服务器
+            QStringList selectedUrls = dialog.selectedServers();
+            
+            // 添加到服务器列表（避免重复）
+            for (const QString &url : selectedUrls) {
+                bool exists = false;
+                for (int i = 0; i < m_serverListWidget->count(); ++i) {
+                    if (m_serverListWidget->item(i)->text() == url) {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists) {
+                    m_serverListWidget->addItem(url);
+                }
+            }
+            onUIChanged();
+        }
+    });
+    
+    // 高级设置 - 功能开关
+    connect(m_enableKcpProxyCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_disableKcpInputCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_noTunCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_enableQuicProxyCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_disableQuicInputCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_disableRelayKcpCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_disableRelayQuicCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_enableRelayForeignNetworkKcpCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_enableRelayForeignNetworkQuicCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_disableUdpHolePunchingCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_disableTcpHolePunchingCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_disableUpnpCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_needP2pCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_lazyP2pCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_p2pOnlyCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_multiThreadCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_useSmoltcpCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_bindDeviceCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_disableP2pCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_enableExitNodeCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_systemForwardingCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_disableSymHolePunchingCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_disableIpv6CheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_relayAllPeerRpcCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_enableEncryptionCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_acceptDnsCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_devNameEdit, &QLineEdit::textChanged, this, &LDETNetwork::onUIChanged);
+    connect(m_mtuEdit, &QLineEdit::textChanged, this, &LDETNetwork::onUIChanged);
+    connect(m_defaultProtocolCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &LDETNetwork::onUIChanged);
+    connect(m_encryptionAlgorithmCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &LDETNetwork::onUIChanged);
+
+    // 网络白名单
+    connect(m_foreignNetworkWhitelistCheckBox, &LDETCheckBtn::toggled, this, &LDETNetwork::onUIChanged);
+    connect(m_addWhitelistBtn, &QPushButton::clicked, this, [this]() {
+        QString item = m_foreignNetworkWhitelistEdit->text().trimmed();
+        if (!item.isEmpty()) {
+            m_whitelistListWidget->addItem(item);
+            m_foreignNetworkWhitelistEdit->clear();
+            onUIChanged();
+        }
+    });
+    connect(m_removeWhitelistBtn, &QPushButton::clicked, this, [this]() {
+        QListWidgetItem *item = m_whitelistListWidget->currentItem();
+        if (item) {
+            delete m_whitelistListWidget->takeItem(m_whitelistListWidget->row(item));
+            onUIChanged();
+        }
+    });
+    
+    // 监听地址
+    connect(m_addListenAddrBtn, &QPushButton::clicked, this, [this]() {
+        QString addr = m_listenAddrEdit->text().trimmed();
+        if (!addr.isEmpty()) {
+            m_listenAddrListWidget->addItem(addr);
+            m_listenAddrEdit->clear();
+            onUIChanged();
+        }
+    });
+    connect(m_removeListenAddrBtn, &QPushButton::clicked, this, [this]() {
+        QListWidgetItem *item = m_listenAddrListWidget->currentItem();
+        if (item) {
+            delete m_listenAddrListWidget->takeItem(m_listenAddrListWidget->row(item));
+            onUIChanged();
+        }
+    });
+    
+    // 子网代理 CIDR
+    connect(m_addProxyNetworkBtn, &QPushButton::clicked, this, [this]() {
+        QString cidr = m_proxyNetworkEdit->text().trimmed();
+        if (!cidr.isEmpty()) {
+            m_proxyNetworkListWidget->addItem(cidr);
+            m_proxyNetworkEdit->clear();
+            onUIChanged();
+        }
+    });
+    connect(m_removeProxyNetworkBtn, &QPushButton::clicked, this, [this]() {
+        QListWidgetItem *item = m_proxyNetworkListWidget->currentItem();
+        if (item) {
+            delete m_proxyNetworkListWidget->takeItem(m_proxyNetworkListWidget->row(item));
+            onUIChanged();
+        }
+    });
+    connect(m_calculateCidrBtn, &QPushButton::clicked, this, []() {
+        // 获取应用程序目录
+        QString appDir = QCoreApplication::applicationDirPath();
+        
+        // 根据平台确定可执行文件名
+#ifdef Q_OS_WIN
+        QString cidrCalcPath = appDir + "/CIDRCalculator.exe";
+#else
+        QString cidrCalcPath = appDir + "/CIDRCalculator";
+#endif
+        
+        // 以非监测方式启动程序
+        QProcess::startDetached(cidrCalcPath, QStringList(), appDir);
+    });
+
+    // 自定义路由规则
+    connect(m_addCustomRouteBtn, &QPushButton::clicked, this, [this]() {
+        QString route = m_customRouteEdit->text().trimmed();
+        if (!route.isEmpty()) {
+            m_customRouteListWidget->addItem(route);
+            m_customRouteEdit->clear();
+            onUIChanged();
+        }
+    });
+    connect(m_removeCustomRouteBtn, &QPushButton::clicked, this, [this]() {
+        QListWidgetItem *item = m_customRouteListWidget->currentItem();
+        if (item) {
+            delete m_customRouteListWidget->takeItem(m_customRouteListWidget->row(item));
+            onUIChanged();
+        }
+    });
+
+    // 出口节点列表
+    connect(m_addExitNodeBtn, &QPushButton::clicked, this, [this]() {
+        QString node = m_exitNodeEdit->text().trimmed();
+        if (!node.isEmpty()) {
+            m_exitNodeListWidget->addItem(node);
+            m_exitNodeEdit->clear();
+            onUIChanged();
+        }
+    });
+    connect(m_removeExitNodeBtn, &QPushButton::clicked, this, [this]() {
+        QListWidgetItem *item = m_exitNodeListWidget->currentItem();
+        if (item) {
+            delete m_exitNodeListWidget->takeItem(m_exitNodeListWidget->row(item));
+            onUIChanged();
+        }
+    });
+}
+
+QVector<int> LDETNetwork::loadAllNetworkConfs()
+{
+    // 清空现有数据
+    m_networksList->clear();
+    m_networkConfs.clear();
+    
+    // 从文件读取配置
+    m_networkConfs = ::readAllNetworkConf();
+    
+    // 收集配置文件中 is_running 为 true 的网络索引（用于自动回连）
+    QVector<int> wasRunningIndexes;
+    
+    // 从 FFI 获取实际运行的网络实例列表（用于检测是否有残留的网络实例）
+    std::vector<EasyTierFFI::KVPair> runningInstances;
+    size_t maxLen = MAX_NETWORK_INSTANCES;
+    int runningCount = EasyTierFFI::collectNetworkInfos(runningInstances, maxLen);
+    
+    // 如果有残留的网络实例，尝试停止它们（因为程序重启后无法管理旧实例）
+    if (runningCount > 0) {
+        // 停止所有残留的网络实例（传递空数组和 length=0 来终止所有实例）
+        std::vector<std::string> emptyNames;
+        size_t zeroLen = 0;
+        EasyTierFFI::retainNetworkInstance(emptyNames, zeroLen);
+    }
+    
+    // 处理每个配置：
+    // 1. 记录配置文件中 is_running 为 true 的索引
+    // 2. 将所有配置的当前运行状态设为 false（程序刚启动，实际未运行）
+    //    注意：这里设为 false 后，配置文件中原来的 is_running 值就丢失了
+    //    所以需要先记录，然后在自动回连时启动后，网络状态会变为 true
+    for (size_t i = 0; i < m_networkConfs.size(); ++i) {
+        // 记录配置文件中标记为运行的网络
+        if (m_networkConfs[i].isRunning()) {
+            wasRunningIndexes.append(static_cast<int>(i));
+        }
+        // 程序刚启动，所有网络实际都未运行
+        m_networkConfs[i].setRunning(false);
+    }
+    
+    // 添加到列表
+    for (size_t i = 0; i < m_networkConfs.size(); ++i) {
+        QString displayName = getNetworkDisplayName(static_cast<int>(i));
+        m_networksList->addItem(displayName);
+    }
+    
+    // 更新所有列表项的样式
+    updateAllListItemStyles();
+    
+    // 更新 TabWidget 状态
+    updateTabWidgetState();
+    
+    // 如果有网络配置，默认选中第一项
+    if (m_networksList->count() > 0) {
+        m_networksList->setCurrentRow(0);
+    }
+    
+    // 更新运行按钮样式
+    updateRunButtonStyle();
+    
+    // 返回配置文件中标记为运行的网络索引列表
+    return wasRunningIndexes;
+}
+
+void LDETNetwork::saveAllNetworkConfs() const
+{
+    // 保存到文件
+    QString errorMsg;
+    if (!::saveAllNetworkConf(m_networkConfs, &errorMsg)) {
+        qWarning() << "保存网络配置失败:" << errorMsg;
+    }
+}
+
+bool LDETNetwork::stopNetworkAndWait(const std::string &instName, int timeoutMs)
+{
+    QEventLoop loop;
+    bool stopSuccess = false;
+
+    QMetaObject::Connection conn = connect(m_runWorker, &ETRunWorker::etRunStopped, this,
+        [&stopSuccess, &loop, &instName](const std::string &name, bool success, const std::string &) {
+            if (name == instName) {
+                stopSuccess = success;
+                loop.quit();
+            }
+        }, Qt::QueuedConnection);
+
+    QTimer timeoutTimer;
+    timeoutTimer.setSingleShot(true);
+    connect(&timeoutTimer, &QTimer::timeout, &loop, &QEventLoop::quit);
+    timeoutTimer.start(timeoutMs);
+
+    QMetaObject::invokeMethod(m_runWorker, "stopNetwork",
+                              Qt::QueuedConnection,
+                              Q_ARG(std::string, instName));
+    loop.exec();
+    disconnect(conn);
+
+    return stopSuccess;
+}
+
+void LDETNetwork::onExportConf()
+{
+    // 检查是否有选中的配置
+    int currentRow = m_networksList->currentRow();
+    if (currentRow < 0 || currentRow >= static_cast<int>(m_networkConfs.size())) {
+        QMessageBox::information(this, tr("提示"), tr("请先选择一个配置"));
+        return;
+    }
+
+    // 弹出对话框让用户选择导出格式
+    QMessageBox formatDialog(this);
+    formatDialog.setWindowTitle(tr("选择导出格式"));
+    formatDialog.setText(tr("请选择要导出的配置格式："));
+    formatDialog.setInformativeText(tr("JSON 格式：LDEasyTier 使用，可导入到本程序\n"
+                                        "TOML 格式：EasyTier 官方格式，可用于命令行启动"));
+    formatDialog.setIcon(QMessageBox::Question);
+
+    QPushButton *jsonBtn = formatDialog.addButton(tr("JSON 格式"), QMessageBox::AcceptRole);
+    QPushButton *tomlBtn = formatDialog.addButton(tr("TOML 格式"), QMessageBox::AcceptRole);
+    QPushButton *cancelBtn = formatDialog.addButton(QMessageBox::Cancel);
+    formatDialog.setDefaultButton(jsonBtn);
+
+    formatDialog.exec();
+
+    // 判断用户选择
+    QAbstractButton *clickedBtn = formatDialog.clickedButton();
+    if (clickedBtn == cancelBtn) {
+        return;  // 用户取消
+    }
+
+    bool isJsonFormat = (clickedBtn == jsonBtn);
+
+    // 获取用户主目录
+    QString homePath = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+    QString defaultPath;
+    QString filter;
+
+    if (isJsonFormat) {
+        defaultPath = homePath + "/ldet-config.json";
+        filter = tr("JSON 文件 (*.json);;所有文件 (*)");
+    } else {
+        defaultPath = homePath + "/easytier-config.toml";
+        filter = tr("TOML 文件 (*.toml);;所有文件 (*)");
+    }
+
+    // 获取保存文件路径
+    QString filePath = QFileDialog::getSaveFileName(
+        this,
+        tr("导出配置"),
+        defaultPath,
+        filter
+    );
+
+    if (filePath.isEmpty()) {
+        return;  // 用户取消了选择
+    }
+
+    // 写入文件
+    QFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QMessageBox::warning(this, tr("导出失败"), tr("无法写入文件: %1").arg(filePath));
+        return;
+    }
+
+    if (isJsonFormat) {
+        // 导出 JSON 格式：删除 hostname 和 instance_name
+        QJsonObject json = m_networkConfs[currentRow].toJson();
+        json.remove("hostname");
+        json.remove("instance_name");
+        json.remove("is_running");
+        QJsonDocument doc(json);
+        file.write(doc.toJson(QJsonDocument::Indented));
+    } else {
+        // 导出 TOML 格式
+        std::string tomlContent = m_networkConfs[currentRow].toToml();
+        file.write(tomlContent.c_str());
+    }
+
+    file.close();
+
+    QMessageBox::information(this, tr("导出成功"), tr("配置已导出到: %1").arg(filePath));
+}
+
+void LDETNetwork::onImportConf()
+{
+    // 获取用户主目录
+    const QString &homePath = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+    
+    // 选择要导入的文件
+    const QString filePath = QFileDialog::getOpenFileName(
+        this,
+        tr("导入配置"),
+        homePath,
+        tr("JSON 文件 (*.json);;所有文件 (*)")
+    );
+    
+    if (filePath.isEmpty()) {
+        return;  // 用户取消了选择
+    }
+    
+    // 读取文件内容
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        QMessageBox::warning(this, tr("导入失败"), tr("无法读取文件: %1").arg(filePath));
+        return;
+    }
+
+    const QByteArray &jsonData = file.readAll();
+    file.close();
+    
+    // 解析 JSON
+    QJsonParseError parseError;
+    const QJsonDocument &doc = QJsonDocument::fromJson(jsonData, &parseError);
+    
+    if (parseError.error != QJsonParseError::NoError) {
+        QMessageBox::warning(this, tr("导入失败"), tr("JSON 解析错误: %1").arg(parseError.errorString()));
+        return;
+    }
+    
+    if (!doc.isObject()) {
+        QMessageBox::warning(this, tr("导入失败"), tr("配置文件格式错误"));
+        return;
+    }
+    
+    // 创建新的网络配置并导入（构造函数会自动生成 instanceName）
+    NetworkConf newConf;
+    newConf.readFromJson(doc.object());
+    
+    // 添加到配置列表
+    m_networkConfs.push_back(newConf);
+    
+    // 在列表中添加新项
+    const int &index = static_cast<int>(m_networkConfs.size()) - 1;
+    const QString &displayName = getNetworkDisplayName(index);
+    m_networksList->addItem(displayName);
+    
+    // 设置默认图标（未运行状态）
+    updateListItemStyle(index);
+    
+    // 选中新添加的项
+    m_networksList->setCurrentRow(index);
+    
+    // 更新 TabWidget 状态
+    updateTabWidgetState();
+    
+    QMessageBox::information(this, tr("导入成功"), tr("配置已成功导入"));
+}
+
+void LDETNetwork::onRunNetworkBtnClicked()
+{
+    const int &currentRow = m_networksList->currentRow();
+    
+    // 检查是否有选中的网络
+    if (currentRow < 0 || currentRow >= static_cast<int>(m_networkConfs.size())) {
+        QMessageBox::information(this, tr("提示"), tr("请先选择一个网络"));
+        return;
+    }
+    
+    NetworkConf &conf = m_networkConfs[currentRow];
+    
+    // 根据运行状态决定是启动还是停止
+    if (conf.isRunning()) {
+        // 停止网络
+        onRunNetworkBtnClicked_Stop(conf);
+    } else {
+        // 启动网络
+        onRunNetworkBtnClicked_Start(conf);
+    }
+}
+
+void LDETNetwork::onRunNetworkBtnClicked_Start(const NetworkConf &conf)
+{
+    // 保存当前配置到 UI
+    const int &currentRow = m_networksList->currentRow();
+    if (currentRow >= 0 && currentRow < static_cast<int>(m_networkConfs.size())) {
+        saveConfFromUI(currentRow);
+    }
+
+#ifdef Q_OS_MACOS
+    const NetworkConf &currentConf = (currentRow >= 0 && currentRow < static_cast<int>(m_networkConfs.size()))
+        ? m_networkConfs[currentRow]
+        : conf;
+    if (!currentConf.m_noTun && geteuid() != 0) {
+        QMessageBox::warning(
+            this,
+            tr("需要管理员权限"),
+            tr("当前网络未启用无 TUN 模式，需要管理员权限创建 TUN 设备。\n\n"
+               "请在高级设置中启用“无 TUN 模式”，或等待后续 macOS 特权 helper 支持。")
+        );
+        return;
+    }
+#endif
+    
+    // 清空该网络配置的运行状态和日志
+    for (auto &networkConf : m_networkConfs) {
+        if (networkConf.getInstanceName() == conf.getInstanceName()) {
+            networkConf.m_runningStatus.clear();
+            networkConf.m_runningLog.clear();
+            networkConf.m_lastLogTimestamp.clear();
+            networkConf.m_renderedLogCount = 0;
+            break;
+        }
+    }
+
+    // 切换到运行状态页面
+    m_tabWidget->setCurrentIndex(2);  // 索引2是运行状态页面
+    
+    // 生成 TOML 配置
+    const std::string &tomlConfig = conf.toToml();
+
+#ifdef QT_DEBUG
+    std::clog << "[LDETNetwork] 运行网络前 TOML 配置:" << std::endl
+              << tomlConfig << std::endl;
+#endif
+
+    // 创建进度对话框
+    if (!m_progressDialog) {
+        m_progressDialog = new QProgressDialog(this);
+        m_progressDialog->setWindowModality(Qt::WindowModal);
+        m_progressDialog->setCancelButton(nullptr);
+        m_progressDialog->setRange(0, 0);  // 无限进度条
+    }
+    m_progressDialog->setLabelText(tr("正在启动网络 \"%1\"...").arg(QString::fromStdString(conf.m_networkName)));
+    m_progressDialog->show();
+    
+    // 记录当前正在操作的实例名称（FFI 中 instance_name 是 m_instanceName）
+    m_currentRunningInstName = conf.getInstanceName();
+    
+    // 调用 Worker 启动网络
+    QMetaObject::invokeMethod(m_runWorker, "runNetwork", Qt::QueuedConnection,
+                              Q_ARG(std::string, conf.getInstanceName()),
+                              Q_ARG(std::string, tomlConfig));
+}
+
+void LDETNetwork::onRunNetworkBtnClicked_Stop(const NetworkConf &conf)
+{
+    // 清空该网络配置的运行状态
+    for (auto &networkConf : m_networkConfs) {
+        if (networkConf.getInstanceName() == conf.getInstanceName()) {
+            networkConf.m_runningStatus.clear();
+            networkConf.m_lastLogTimestamp.clear();
+            break;
+        }
+    }
+
+    // 创建进度对话框
+    if (!m_progressDialog) {
+        m_progressDialog = new QProgressDialog(this);
+        m_progressDialog->setWindowModality(Qt::WindowModal);
+        m_progressDialog->setCancelButton(nullptr);
+        m_progressDialog->setRange(0, 0);  // 无限进度条
+    }
+    m_progressDialog->setLabelText(tr("正在停止网络 \"%1\"...").arg(QString::fromStdString(conf.m_networkName)));
+    m_progressDialog->show();
+    
+    // 记录当前正在操作的实例名称
+    m_currentRunningInstName = conf.getInstanceName();
+    
+    // 调用 Worker 停止网络（使用 instanceName 标识）
+    QMetaObject::invokeMethod(m_runWorker, "stopNetwork", Qt::QueuedConnection,
+                              Q_ARG(std::string, conf.getInstanceName()));
+}
+
+void LDETNetwork::onNetworkStarted(const std::string &instName, bool success, const std::string &errorMsg)
+{
+    // 关闭进度对话框
+    if (m_progressDialog) {
+        m_progressDialog->hide();
+    }
+    
+    // 查找对应的网络配置（使用 instanceName 匹配）
+    for (size_t i = 0; i < m_networkConfs.size(); ++i) {
+        if (m_networkConfs[i].getInstanceName() == instName) {
+            if (success) {
+                // 更新运行状态
+                m_networkConfs[i].setRunning(true);
+                
+                // 增加运行网络计数并启动监测
+                m_runningNetworkCount++;
+                startNodeMonitor();
+                
+                // 更新列表项样式
+                updateListItemStyle(static_cast<int>(i));
+                
+                // 更新按钮样式
+                updateRunButtonStyle();
+                
+                // 保存配置
+                saveAllNetworkConfs();
+            } else {
+                // 启动失败时确保状态和 UI 回到未运行，避免按钮看起来像无响应
+                m_networkConfs[i].setRunning(false);
+                m_networkConfs[i].m_runningStatus.clear();
+                updateListItemStyle(static_cast<int>(i));
+                updateRunButtonStyle();
+
+                if (m_networksList->currentRow() == static_cast<int>(i)) {
+                    updateCurrentNetworkUI();
+                    updateCurrentNetworkLogUI();
+                }
+
+                saveAllNetworkConfs();
+
+                const QString message = errorMsg.empty()
+                    ? tr("网络启动失败")
+                    : tr("网络启动失败：%1").arg(QString::fromStdString(errorMsg));
+                QMessageBox::warning(this, tr("启动失败"), message);
+            }
+            return;
+        }
+    }
+}
+
+void LDETNetwork::onNetworkStopped(const std::string &instName, bool success, const std::string &errorMsg)
+{
+    // 关闭进度对话框
+    if (m_progressDialog) {
+        m_progressDialog->hide();
+    }
+    
+    // 查找对应的网络配置（使用 instanceName 匹配）
+    for (size_t i = 0; i < m_networkConfs.size(); ++i) {
+        if (m_networkConfs[i].getInstanceName() == instName) {
+            if (success) {
+                // 更新运行状态
+                m_networkConfs[i].setRunning(false);
+                
+                // 清除缓存的节点状态（保留日志以便查看上次运行日志）
+                m_networkConfs[i].m_runningStatus.clear();
+                
+                // 减少运行网络计数，如果没有运行的网络则停止监测
+                m_runningNetworkCount--;
+                if (m_runningNetworkCount <= 0) {
+                    m_runningNetworkCount = 0;
+                    stopNodeMonitor();
+                }
+                
+                // 更新列表项样式
+                updateListItemStyle(static_cast<int>(i));
+                
+                // 更新按钮样式
+                updateRunButtonStyle();
+                
+                // 如果当前选中的是被停止的网络，刷新UI显示
+                if (m_networksList->currentRow() == static_cast<int>(i)) {
+                    updateCurrentNetworkUI();
+                    updateCurrentNetworkLogUI();
+                }
+                
+                // 保存配置
+                saveAllNetworkConfs();
+            } else {
+                updateListItemStyle(static_cast<int>(i));
+                updateRunButtonStyle();
+
+                const QString message = errorMsg.empty()
+                    ? tr("网络停止失败")
+                    : tr("网络停止失败：%1").arg(QString::fromStdString(errorMsg));
+                QMessageBox::warning(this, tr("停止失败"), message);
+            }
+            return;
+        }
+    }
+}
+
+void LDETNetwork::updateRunButtonStyle() const
+{
+    int currentRow = m_networksList->currentRow();
+    
+    if (currentRow < 0 || currentRow >= static_cast<int>(m_networkConfs.size())) {
+        // 没有选中网络，恢复默认样式
+        m_runNetworkBtn->setText(tr("运行网络"));
+        m_runNetworkBtn->setStyleSheet(QString());
+        return;
+    }
+    
+    const NetworkConf &conf = m_networkConfs[currentRow];
+    
+    if (conf.isRunning()) {
+        // 网络运行中，显示停止按钮样式
+        m_runNetworkBtn->setText(tr("运行中"));
+        m_runNetworkBtn->setStyleSheet(QStringLiteral(
+            R"(QPushButton {
+              color: #2ecc71;
+              font-weight: bold;
+            })"
+        ));
+    } else {
+        // 网络未运行，恢复默认样式
+        m_runNetworkBtn->setText(tr("运行网络"));
+        m_runNetworkBtn->setStyleSheet(QString());
+    }
+}
+
+void LDETNetwork::updateListItemStyle(int index) const
+{
+    if (index < 0 || index >= m_networksList->count()) {
+        return;
+    }
+    
+    if (index >= 0 && index < static_cast<int>(m_networkConfs.size())) {
+        const NetworkConf &conf = m_networkConfs[index];
+        
+        if (conf.isRunning()) {
+            // 运行中：使用 running 图标
+            m_networksList->setItemIcon(index, QIcon(QStringLiteral(":/icons/network-running.svg")));
+        } else {
+            // 未运行：使用默认网络图标
+            m_networksList->setItemIcon(index, QIcon(QStringLiteral(":/icons/network.svg")));
+        }
+    }
+}
+
+void LDETNetwork::updateAllListItemStyles() const
+{
+    for (int i = 0; i < m_networksList->count(); ++i) {
+        updateListItemStyle(i);
+    }
+}
+
+QString LDETNetwork::ipAddrToString(quint32 addr)
+{
+    // 将 uint32 IP 地址转换为点分十进制字符串
+    // addr 是网络字节序（大端），最高字节在前
+    return QString("%1.%2.%3.%4")
+        .arg((addr >> 24) & 0xFF)
+        .arg((addr >> 16) & 0xFF)
+        .arg((addr >> 8) & 0xFF)
+        .arg(addr & 0xFF);
+}
+
+QVector<NodeInfo> LDETNetwork::parseNodeInfosFromJson(const QString &jsonStr)
+{
+    QVector<NodeInfo> nodeInfos;
+    
+    QJsonParseError parseError;
+    QJsonDocument doc = QJsonDocument::fromJson(jsonStr.toUtf8(), &parseError);
+    
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        return nodeInfos;
+    }
+    
+    QJsonObject rootObj = doc.object();
+    
+    // 获取 routes 数组
+    QJsonArray routes = rootObj["routes"].toArray();
+    if (routes.isEmpty()) {
+        return nodeInfos;
+    }
+    
+    // 获取 peers 数组，用于判断直连/中转和获取延迟
+    QJsonArray peers = rootObj["peers"].toArray();
+    
+    // 构建 peer_id 到连接信息的映射
+    QHash<qint64, QStringList> peerConnMap;  // peer_id -> 协议列表
+    QHash<qint64, int> peerLatencyMap;       // peer_id -> 延迟(ms)
+    QSet<qint64> directlyConnectedPeers;
+    
+    for (const QJsonValue &peerVal : peers) {
+        QJsonObject peerObj = peerVal.toObject();
+        qint64 peerId = peerObj["peer_id"].toVariant().toLongLong();
+        directlyConnectedPeers.insert(peerId);
+        
+        // 获取该节点的所有连接协议（去重）和延迟
+        QJsonArray conns = peerObj["conns"].toArray();
+        QStringList protocols;
+        QSet<QString> addedProtocols;  // 用于去重
+        int minLatencyUs = INT_MAX;    // 取最小延迟（微秒）
+        
+        for (const QJsonValue &connVal : conns) {
+            QJsonObject connObj = connVal.toObject();
+            QString tunnelType = connObj["tunnel"].toObject()["tunnel_type"].toString();
+            if (!tunnelType.isEmpty()) {
+                QString proto = tunnelType.toUpper();
+                if (!addedProtocols.contains(proto)) {
+                    protocols.append(proto);
+                    addedProtocols.insert(proto);
+                }
+            }
+            
+            // 获取延迟（stats.latency_us，单位微秒）
+            QJsonObject stats = connObj["stats"].toObject();
+            int latencyUs = stats["latency_us"].toInt();
+            if (latencyUs > 0 && latencyUs < minLatencyUs) {
+                minLatencyUs = latencyUs;
+            }
+        }
+        peerConnMap[peerId] = protocols;
+        
+        // 存储延迟（转换为毫秒），如果没有有效延迟则存 -1
+        if (minLatencyUs != INT_MAX && minLatencyUs > 0) {
+            peerLatencyMap[peerId] = minLatencyUs / 1000;  // 微秒转毫秒
+        } else {
+            peerLatencyMap[peerId] = -1;
+        }
+    }
+    
+    // 解析本机节点信息 my_node_info
+    QJsonObject myNodeInfo = rootObj["my_node_info"].toObject();
+    qint64 myPeerId = myNodeInfo["peer_id"].toVariant().toLongLong();
+    
+    // 添加本机节点信息（放在第一个位置）
+    if (!myNodeInfo.isEmpty()) {
+        NodeInfo localInfo;
+        localInfo.isLocalNode = true;
+        
+        // 解析本机虚拟 IP
+        QJsonObject myIpv4 = myNodeInfo["virtual_ipv4"].toObject();
+        QJsonObject myAddrObj = myIpv4["address"].toObject();
+        quint32 myAddr = myAddrObj["addr"].toVariant().toUInt();
+        localInfo.virtualIp = ipAddrToString(myAddr);
+        
+        // 解析本机 hostname
+        localInfo.hostname = myNodeInfo["hostname"].toString();
+        
+        // 本机节点延迟为 0
+        localInfo.latencyMs = 0;
+        
+        // 本机节点的协议从 listeners 获取
+        QJsonArray listeners = myNodeInfo["listeners"].toArray();
+        QStringList localProtocols;
+        for (const QJsonValue &listenerVal : listeners) {
+            QString url = listenerVal.toObject()["url"].toString();
+            if (url.startsWith("tcp://") || url.startsWith("udp://")) {
+                QString proto = url.section("://", 0, 0).toUpper();
+                if (!localProtocols.contains(proto)) {
+                    localProtocols.append(proto);
+                }
+            }
+        }
+        localInfo.protocol = localProtocols.join(",");
+        
+        // 本机节点显示为直连
+        localInfo.connType = NodeConnType::Direct;
+        localInfo.connMethod = QStringLiteral("Local");
+        
+        nodeInfos.append(localInfo);
+    }
+    
+    // 遍历 routes 构建其他节点信息
+    for (const QJsonValue &routeVal : routes) {
+        QJsonObject routeObj = routeVal.toObject();
+        
+        // 跳过本机节点
+        qint64 peerId = routeObj["peer_id"].toVariant().toLongLong();
+        if (peerId == myPeerId) {
+            continue;
+        }
+        
+        NodeInfo info;
+        
+        // 解析 IP 地址
+        QJsonObject ipv4Addr = routeObj["ipv4_addr"].toObject();
+        QJsonObject addressObj = ipv4Addr["address"].toObject();
+        quint32 addr = addressObj["addr"].toVariant().toUInt();
+        info.virtualIp = ipAddrToString(addr);
+        
+        // 解析 hostname
+        info.hostname = routeObj["hostname"].toString();
+        
+        // 解析延迟
+        // 判断是否直连
+        bool isDirectlyConnected = directlyConnectedPeers.contains(peerId);
+        
+        if (isDirectlyConnected && peerLatencyMap[peerId] > 0) {
+            // 直连节点：优先使用 peers 中的延迟值（已转换为毫秒）
+            info.latencyMs = peerLatencyMap[peerId];
+        } else {
+            // 非直连节点或没有有效延迟：使用 path_latency（单位是 ms）
+            info.latencyMs = routeObj["path_latency"].toInt();
+        }
+        
+        // 判断是否为公共服务器
+        QJsonObject featureFlag = routeObj["feature_flag"].toObject();
+        bool isPublicServer = featureFlag["is_public_server"].toBool();
+        
+        if (isPublicServer) {
+            info.connType = NodeConnType::Server;
+            // 服务器如果是直连的，也显示协议
+            if (isDirectlyConnected) {
+                info.protocol = peerConnMap[peerId].join(",");
+            }
+        } else if (isDirectlyConnected) {
+            info.connType = NodeConnType::Direct;
+            // 获取直连节点的协议
+            info.protocol = peerConnMap[peerId].join(",");
+        } else {
+            info.connType = NodeConnType::Relay;
+        }
+        
+        // 设置连接方式
+        if (info.connType == NodeConnType::Direct) {
+            info.connMethod = QStringLiteral("P2P");
+        } else if (info.connType == NodeConnType::Relay) {
+            info.connMethod = QStringLiteral("Relay");
+        } else {
+            info.connMethod = QStringLiteral("Server");
+        }
+        
+        nodeInfos.append(info);
+    }
+    
+    return nodeInfos;
+}
+
+void LDETNetwork::updateCurrentNetworkUI()
+{
+    // 获取当前选中网络
+    const int currentIndex = m_networksList->currentRow();
+    if (currentIndex < 0 || currentIndex >= static_cast<int>(m_networkConfs.size())) {
+        return;
+    }
+    
+    const NetworkConf &currentConf = m_networkConfs[currentIndex];
+    
+    // 如果当前网络未运行，不显示节点信息
+    if (!currentConf.isRunning()) {
+        for (LDETNodeInfo *widget : m_nodeInfoWidgets) {
+            m_nodeInfoLayout->removeWidget(widget);
+            widget->hide();
+            widget->deleteLater();
+        }
+        m_nodeInfoWidgets.clear();
+        m_emptyLabel->setVisible(true);
+        m_statusLabel->setText(NodeStatusText::NO_NODES_NOT_RUNNING);
+        m_nodeInfoLayout->activate();
+        m_nodeInfoContainer->update();
+        return;
+    }
+    
+    const QVector<NodeInfo> &nodeInfos = currentConf.m_runningStatus;
+    
+    // 增量更新节点信息控件
+    int oldCount = m_nodeInfoWidgets.size();
+    int newCount = nodeInfos.size();
+    
+    // 更新已存在的卡片信息
+    for (int i = 0; i < qMin(oldCount, newCount); ++i) {
+        m_nodeInfoWidgets[i]->setNodeInfo(nodeInfos[i]);
+    }
+    
+    // 如果节点增加，创建新卡片
+    if (newCount > oldCount) {
+        for (int i = oldCount; i < newCount; ++i) {
+            LDETNodeInfo *nodeWidget = new LDETNodeInfo(nodeInfos[i], m_nodeInfoContainer);
+            m_nodeInfoWidgets.append(nodeWidget);
+            // 插入到 stretch 之前（考虑空状态标签）
+            int insertIndex = m_nodeInfoLayout->count() - 1;
+            m_nodeInfoLayout->insertWidget(insertIndex, nodeWidget);
+        }
+    }
+    // 如果节点减少，删除多余的卡片
+    else if (newCount < oldCount) {
+        for (int i = oldCount - 1; i >= newCount; --i) {
+            LDETNodeInfo *widget = m_nodeInfoWidgets.takeAt(i);
+            m_nodeInfoLayout->removeWidget(widget);
+            widget->hide();
+            widget->deleteLater();
+        }
+    }
+    
+    // 更新空状态标签显示
+    m_emptyLabel->setVisible(m_nodeInfoWidgets.isEmpty());
+    
+    // 更新顶部标签
+    if (m_nodeInfoWidgets.isEmpty()) {
+        m_statusLabel->setText(currentConf.m_isRunning ? NodeStatusText::NO_NODES : NodeStatusText::NO_NODES_NOT_RUNNING);
+    } else {
+        m_statusLabel->setText(NodeStatusText::WITH_NODES);
+    }
+
+    // 强制布局立即重算并刷新容器，确保节点增删后界面立刻更新
+    m_nodeInfoLayout->activate();
+    m_nodeInfoContainer->update();
+}
+
+// 解析并更新运行中的日志
+void LDETNetwork::parseAndUpdateRunningLogs(NetworkConf &conf, const QString &jsonStr)
+{
+    QJsonParseError parseError;
+    QJsonDocument doc = QJsonDocument::fromJson(jsonStr.toUtf8(), &parseError);
+
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        return;
+    }
+
+    QJsonObject rootObj = doc.object();
+
+    // 获取 events 数组（倒序排列，最新的在前）
+    QJsonArray events = rootObj["events"].toArray();
+    if (events.isEmpty()) {
+        return;
+    }
+
+    // 收集本次新读取的日志（临时列表，稍后需要反转）
+    QStringList newLogs;
+    QString newestTimestamp; // 本次读取的最新时间戳
+
+    // 遍历事件数组（倒序，最新的在前）
+    for (const QJsonValue &eventVal : events) {
+        QString eventStr = eventVal.toString();
+        if (eventStr.isEmpty()) {
+            continue;
+        }
+
+        // 解析事件 JSON
+        QJsonParseError eventParseError;
+        QJsonDocument eventDoc = QJsonDocument::fromJson(eventStr.toUtf8(), &eventParseError);
+        if (eventParseError.error != QJsonParseError::NoError || !eventDoc.isObject()) {
+            continue;
+        }
+
+        QJsonObject eventObj = eventDoc.object();
+        QString time = eventObj["time"].toString();
+        QJsonObject event = eventObj["event"].toObject();
+
+        // 如果已有上次读取的时间戳，且当前时间戳早于或等于上次，则跳出循环
+        // 时间格式：2026-04-05T08:52:59.046875300+08:00，可以直接字符串比较
+        if (!conf.m_lastLogTimestamp.isEmpty() && time <= conf.m_lastLogTimestamp) {
+            break;
+        }
+
+        // 记录本次读取的最新时间戳（第一个遇到的就是最新的）
+        if (newestTimestamp.isEmpty()) {
+            newestTimestamp = time;
+        }
+
+        // 格式化并添加到临时列表
+        QString formattedLog = formatLogEntry(time, event);
+        if (!formattedLog.isEmpty()) {
+            newLogs.append(formattedLog);
+        }
+    }
+
+    // 更新上次读取的最新时间戳
+    if (!newestTimestamp.isEmpty()) {
+        conf.m_lastLogTimestamp = newestTimestamp;
+    }
+
+    // 将新日志反转顺序后添加到 m_runningLog（因为原始数据是倒序的）
+    // 反转后变成正序（最旧的在前），直接追加到末尾即可
+    for (int i = newLogs.size() - 1; i >= 0; --i) {
+        conf.m_runningLog.append(newLogs[i]);
+    }
+
+    // 检查日志数量限制
+    while (conf.m_runningLog.size() > MAX_LOG_COUNT) {
+        conf.m_runningLog.removeFirst();
+        if (conf.m_renderedLogCount > 0) {
+            conf.m_renderedLogCount--;
+        }
+    }
+}
+
+QString LDETNetwork::formatLogEntry(const QString &time, const QJsonObject &eventObj)
+{
+    // 格式化时间，包含日期
+    // 原始格式：2026-04-05T08:52:59.046875300+08:00
+    // 目标格式：04-05 08:52:59
+    QString formattedTime = time;
+    QString datePart;
+    QString timePart;
+    int tIndex = time.indexOf('T');
+    if (tIndex >= 0) {
+        // 提取日期部分：2026-04-05 -> 04-05
+        QString fullDate = time.left(tIndex);
+        QStringList dateParts = fullDate.split('-');
+        if (dateParts.size() >= 3) {
+            datePart = dateParts[1] + "-" + dateParts[2];
+        }
+        // 提取时间部分：HH:MM:SS
+        if (time.length() > tIndex + 9) {
+            timePart = time.mid(tIndex + 1, 8);
+        }
+    }
+    formattedTime = datePart + " " + timePart;
+    
+    // 解析事件类型和内容
+    QString eventText;
+    
+    // 获取事件的键（事件类型）
+    QStringList keys = eventObj.keys();
+    if (keys.isEmpty()) {
+        return QString();
+    }
+    
+    const QString &eventType = keys.first();
+    const QJsonValue &eventData = eventObj[eventType];
+    
+    // 根据不同事件类型格式化输出
+    if (eventType == QStringLiteral("TunDeviceReady")) {
+        eventText = QStringLiteral("TUN 设备就绪: %1").arg(eventData.toString());
+    } else if (eventType == QStringLiteral("DhcpIpv4Changed")) {
+        if (eventData.isArray()) {
+            QJsonArray arr = eventData.toArray();
+            QString oldIp = arr.at(0).toString(QStringLiteral("无"));
+            QString newIp = arr.at(1).toString();
+            eventText = QStringLiteral("DHCP IP 变更: %1 -> %2").arg(oldIp, newIp);
+        }
+    } else if (eventType == QStringLiteral("PeerAdded")) {
+        eventText = QStringLiteral("节点加入: peer_id=%1").arg(eventData.toVariant().toLongLong());
+    } else if (eventType == QStringLiteral("PeerRemoved")) {
+        eventText = QStringLiteral("节点离开: peer_id=%1").arg(eventData.toVariant().toLongLong());
+    } else if (eventType == QStringLiteral("PeerConnAdded")) {
+        QJsonObject connObj = eventData.toObject();
+        QString tunnel = connObj["tunnel"].toObject()["tunnel_type"].toString().toUpper();
+        QString remoteAddr = connObj["tunnel"].toObject()["remote_addr"].toObject()["url"].toString();
+        qint64 peerId = connObj["peer_id"].toVariant().toLongLong();
+        eventText = QStringLiteral("连接建立: [%1] peer_id=%2 %3").arg(tunnel).arg(peerId).arg(remoteAddr);
+    } else if (eventType == QStringLiteral("PeerConnRemoved")) {
+        QJsonObject connObj = eventData.toObject();
+        QString tunnel = connObj["tunnel"].toObject()["tunnel_type"].toString().toUpper();
+        qint64 peerId = connObj["peer_id"].toVariant().toLongLong();
+        eventText = QStringLiteral("连接断开: [%1] peer_id=%2").arg(tunnel).arg(peerId);
+    } else if (eventType == QStringLiteral("Connecting")) {
+        eventText = QStringLiteral("正在连接: %1").arg(eventData.toString());
+    } else if (eventType == QStringLiteral("ConnectError")) {
+        if (eventData.isArray()) {
+            QJsonArray arr = eventData.toArray();
+            QString addr = arr.at(0).toString();
+            QString errMsg = arr.at(1).toString();
+            eventText = QStringLiteral("连接错误: %1 - %2").arg(addr, errMsg);
+        } else {
+            eventText = QStringLiteral("连接错误: %1").arg(eventData.toString());
+        }
+    } else if (eventType == QStringLiteral("ConnectionAccepted")) {
+        if (eventData.isArray()) {
+            QJsonArray arr = eventData.toArray();
+            QString localAddr = arr.at(0).toString();
+            QString remoteAddr = arr.at(1).toString();
+            eventText = QStringLiteral("连接接受: %1 <- %2").arg(localAddr, remoteAddr);
+        }
+    } else if (eventType == QStringLiteral("ListenerAdded")) {
+        eventText = QStringLiteral("监听器添加: %1").arg(eventData.toString());
+    } else if (eventType == QStringLiteral("ListenerRemoved")) {
+        eventText = QStringLiteral("监听器移除: %1").arg(eventData.toString());
+    } else if (eventType == QStringLiteral("ProxyCidrsUpdated")) {
+        if (eventData.isArray()) {
+            QJsonArray arr = eventData.toArray();
+            QStringList added, removed;
+            if (arr.size() > 0 && arr.at(0).isArray()) {
+                for (const auto &v : arr.at(0).toArray()) {
+                    added.append(v.toString());
+                }
+            }
+            if (arr.size() > 1 && arr.at(1).isArray()) {
+                for (const auto &v : arr.at(1).toArray()) {
+                    removed.append(v.toString());
+                }
+            }
+            if (!added.isEmpty()) {
+                eventText = QStringLiteral("子网代理添加: %1").arg(added.join(", "));
+            } else if (!removed.isEmpty()) {
+                eventText = QStringLiteral("子网代理移除: %1").arg(removed.join(", "));
+            } else {
+                eventText = QStringLiteral("子网代理更新");
+            }
+        }
+    } else {
+        // 其他事件类型，显示原始 JSON
+        QString eventDataStr;
+        if (eventData.isObject()) {
+            eventDataStr = QString::fromUtf8(QJsonDocument(eventData.toObject()).toJson(QJsonDocument::Compact));
+        } else if (eventData.isArray()) {
+            eventDataStr = QString::fromUtf8(QJsonDocument(eventData.toArray()).toJson(QJsonDocument::Compact));
+        } else {
+            eventDataStr = eventData.toVariant().toString();
+        }
+        eventText = QStringLiteral("%1: %2").arg(eventType, eventDataStr);
+    }
+    
+    // 使用 HTML 格式，时间戳用蓝色高亮
+    return QStringLiteral("<span style='color:#66ccff'>[%1]</span> %2").arg(formattedTime, eventText.toHtmlEscaped());
+}
+
+void LDETNetwork::updateCurrentNetworkLogUI()
+{
+    // 获取当前选中网络
+    const int currentIndex = m_networksList->currentRow();
+    if (currentIndex < 0 || currentIndex >= static_cast<int>(m_networkConfs.size())) {
+        m_logTextEdit->clear();
+        m_lastRenderedInstName.clear();
+        return;
+    }
+    
+    NetworkConf &currentConf = m_networkConfs[currentIndex];
+    const QStringList &logs = currentConf.m_runningLog;
+    const QString instName = QString::fromStdString(currentConf.getInstanceName());
+    
+    // 检测网络切换或日志截断，需要全量重建
+    const bool networkSwitched = (m_lastRenderedInstName != instName);
+    const bool logsTruncated = (logs.size() < currentConf.m_renderedLogCount);
+    
+    if (networkSwitched || logsTruncated) {
+        m_lastRenderedInstName = instName;
+        m_logTextEdit->clear();
+        // 重置该网络的渲染计数（下次将全量渲染）
+        currentConf.m_renderedLogCount = 0;
+    }
+    
+    const int renderedCount = currentConf.m_renderedLogCount;
+    const int totalCount = logs.size();
+    
+    // 没有新日志，保持原样
+    if (totalCount <= renderedCount) {
+        return;
+    }
+    
+    // 构建新增日志的 HTML
+    QString newLogText;
+    for (int i = renderedCount; i < totalCount; ++i) {
+        newLogText += logs[i] + QStringLiteral("<br>");
+    }
+    
+    if (renderedCount == 0) {
+        // 首次渲染：全量设置
+        m_logTextEdit->setHtml(newLogText);
+    } else {
+        // 增量追加：在文档末尾插入
+        QTextCursor cursor = m_logTextEdit->textCursor();
+        cursor.movePosition(QTextCursor::End);
+        cursor.insertHtml(newLogText);
+    }
+    
+    // 更新已渲染计数
+    currentConf.m_renderedLogCount = totalCount;
+    
+    // 滚动到底部
+    QTextCursor cursor = m_logTextEdit->textCursor();
+    cursor.movePosition(QTextCursor::End);
+    m_logTextEdit->setTextCursor(cursor);
+}
+
+void LDETNetwork::startNodeMonitor() const
+{
+    if (m_monitorTimer && !m_monitorTimer->isActive()) {
+        m_monitorTimer->start();
+    }
+    
+    // 更新顶部标签
+    m_statusLabel->setText(NodeStatusText::NO_NODES);
+}
+
+void LDETNetwork::stopNodeMonitor()
+{
+    if (m_monitorTimer && m_monitorTimer->isActive()) {
+        m_monitorTimer->stop();
+    }
+    
+    // 清空节点信息控件
+    for (LDETNodeInfo *widget : m_nodeInfoWidgets) {
+        m_nodeInfoLayout->removeWidget(widget);
+        widget->hide();
+        widget->deleteLater();
+    }
+    m_nodeInfoWidgets.clear();
+
+    // 显示空状态标签
+    m_emptyLabel->show();
+    m_statusLabel->setText(NodeStatusText::NO_NODES_NOT_RUNNING);
+    m_nodeInfoLayout->activate();
+    m_nodeInfoContainer->update();
+}
+
+void LDETNetwork::onInfosCollected(const std::vector<EasyTierFFI::KVPair> &infos)
+{
+    // 空结果也要刷新运行中配置的节点状态；后续 helper-backed collect 同样依赖这个语义。
+    if (infos.empty()) {
+        for (auto &conf : m_networkConfs) {
+            if (conf.isRunning()) {
+                conf.m_runningStatus.clear();
+            }
+        }
+        updateCurrentNetworkUI();
+        updateCurrentNetworkLogUI();
+        return;
+    }
+    
+    // 遍历所有网络配置，匹配 instance_name 并更新 m_runningStatus 和 m_runningLog
+    for (auto &conf : m_networkConfs) {
+        // 对非运行中的网络，清理缓存的节点状态（保留日志）
+        if (!conf.isRunning()) {
+            conf.m_runningStatus.clear();
+            continue;
+        }
+        
+        const QString &instName = QString::fromStdString(conf.getInstanceName());
+        
+        // 遍历收集到的信息，查找匹配的网络实例
+        bool found = false;
+        for (const auto &info : infos) {
+            if (QString::fromStdString(info.key) == instName) {
+                const QString &jsonStr = QString::fromStdString(info.value);
+                // 解析 JSON 并存入 m_runningStatus
+                conf.m_runningStatus = parseNodeInfosFromJson(jsonStr);
+                // 解析日志并增量更新 m_runningLog
+                parseAndUpdateRunningLogs(conf, jsonStr);
+                found = true;
+                break;
+            }
+        }
+        
+        // 如果运行中但在 infos 中没有找到，清理节点状态（保留日志）
+        if (!found) {
+            conf.m_runningStatus.clear();
+        }
+    }
+    
+    // 根据 UI 当前选中的网络配置刷新节点信息显示
+    updateCurrentNetworkUI();
+    // 刷新日志显示
+    updateCurrentNetworkLogUI();
+}
+
+void LDETNetwork::onMonitorTimerTimeout() const
+{
+    // 在工作线程中收集网络信息
+    if (m_runWorker) {
+        QMetaObject::invokeMethod(m_runWorker, "collectInfos", Qt::QueuedConnection);
+    }
+}
+
+QString LDETNetwork::getNetworkDisplayName(int index) const
+{
+    if (index < 0 || index >= static_cast<int>(m_networkConfs.size())) {
+        return tr("网络 %1").arg(index + 1);
+    }
+    
+    const NetworkConf &conf = m_networkConfs[index];
+    // 如果有标签且不为空，优先使用标签
+    if (!conf.m_networkLabel.empty()) {
+        return QString::fromStdString(conf.m_networkLabel);
+    }
+    // 否则使用默认的"网络x"
+    return tr("网络 %1").arg(index + 1);
+}
+
+void LDETNetwork::updateListItemDisplayName(int index) const
+{
+    if (index < 0 || index >= m_networksList->count()) {
+        return;
+    }
+    
+    LDETLabelListItem *item = m_networksList->item(index);
+    if (item) {
+        item->setText(getNetworkDisplayName(index));
+    }
+}
+
+void LDETNetwork::onRenameNetwork()
+{
+    int currentRow = m_networksList->currentRow();
+    if (currentRow < 0 || currentRow >= static_cast<int>(m_networkConfs.size())) {
+        return;
+    }
+    
+    // 获取当前显示名称作为默认值
+    QString currentName = getNetworkDisplayName(currentRow);
+    
+    // 弹出输入对话框
+    bool ok = false;
+    QString newName = QInputDialog::getText(this, tr("重命名网络"),
+                                            tr("请输入新的网络名称:"),
+                                            QLineEdit::Normal, currentName, &ok);
+    
+    if (ok && !newName.trimmed().isEmpty()) {
+        // 更新配置
+        m_networkConfs[currentRow].m_networkLabel = newName.trimmed().toStdString();
+        
+        // 更新列表显示
+        updateListItemDisplayName(currentRow);
+        
+        // 保存配置
+        saveAllNetworkConfs();
+    }
+}
+
+void LDETNetwork::onListDoubleClicked()
+{
+    int currentRow = m_networksList->currentRow();
+    if (currentRow < 0 || currentRow >= static_cast<int>(m_networkConfs.size())) {
+        return;
+    }
+    
+    // 获取当前显示名称作为默认值
+    QString currentName = getNetworkDisplayName(currentRow);
+    
+    // 弹出输入对话框
+    bool ok = false;
+    QString newName = QInputDialog::getText(this, tr("重命名网络"),
+                                            tr("请输入新的网络名称:"),
+                                            QLineEdit::Normal, currentName, &ok);
+    
+    if (ok && !newName.trimmed().isEmpty()) {
+        // 更新配置
+        m_networkConfs[currentRow].m_networkLabel = newName.trimmed().toStdString();
+        
+        // 更新列表显示
+        updateListItemDisplayName(currentRow);
+        
+        // 保存配置
+        saveAllNetworkConfs();
+    }
+}
+
+void LDETNetwork::runNetworkByIndex(int index)
+{
+    // 检查索引有效性
+    if (index < 0 || index >= static_cast<int>(m_networkConfs.size())) {
+        return;
+    }
+    
+    // 检查网络是否已经在运行
+    if (m_networkConfs[index].isRunning()) {
+        return;
+    }
+    
+    // 启动网络
+    onRunNetworkBtnClicked_Start(m_networkConfs[index]);
+}
+
+// 调整左侧面板宽度：初始 160px，随窗口指数伸缩， 全屏时占 15%
+void LDETNetwork::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+
+    // 记录首次出现的非零宽度作为基准
+    if (m_initialWidth == 0 && width() > 0) {
+        m_initialWidth = width();
+    }
+
+    int targetWidth = 160; // fallback
+    int maxWidth = qMax(LEFT_PANEL_MIN_WIDTH, static_cast<int>(width() * MAX_WIDTH_RATIO));
+    if (isFullScreen()) {
+        // 全屏强制 15% 宽度
+        targetWidth = static_cast<int>(width() * FULLSCREEN_RATIO);
+        targetWidth = qBound(LEFT_PANEL_MIN_WIDTH, targetWidth, maxWidth);
+    } else {
+        // 指数伸缩：仅在已记录基准宽度时计算，否则使用 fallback
+        if (m_initialWidth > 0) {
+            double ratio = static_cast<double>(width()) / static_cast<double>(m_initialWidth);
+            targetWidth = static_cast<int>(LEFT_PANEL_MIN_WIDTH * std::pow(ratio, EXPONENTIAL_K));
+        } else {
+            targetWidth = LEFT_PANEL_MIN_WIDTH; // 没有基准宽度时直接使用默认宽度
+        }
+        // 限制最小/最大宽度防止过度压缩或占用过多空间
+        targetWidth = qBound(LEFT_PANEL_MIN_WIDTH, targetWidth, maxWidth);
+    }
+
+    if (m_leftFrame) {
+        if (m_leftFrame->minimumWidth() != targetWidth) {
+            m_leftFrame->setMinimumWidth(targetWidth);
+        }
+        if (m_leftFrame->maximumWidth() != targetWidth) {
+            m_leftFrame->setMaximumWidth(targetWidth);
+        }
+    }
+}
+
+// 静态捕获基准宽度：在窗口首次显示后记录实际宽度，避免在布局未完成前记录过小值
+void LDETNetwork::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    if (m_initialWidth == 0) {
+        QTimer::singleShot(0, this, [this]() {
+            if (m_initialWidth == 0 && width() > 0) {
+                m_initialWidth = width();
+            }
+        });
+    }
+}

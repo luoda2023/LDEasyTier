@@ -1,0 +1,180 @@
+//
+// Created by YMHuang on 2026/4/5.
+//
+
+#ifndef QTEASYTIER_NETWORKCONF_H
+#define QTEASYTIER_NETWORKCONF_H
+
+#include <string>
+#include <string_view>
+#include <vector>
+#include <random>
+#include <optional>
+
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QFile>
+#include <QDir>
+#include <QVector>
+#include "ldetnodeinfo.h"
+
+class LDETNetwork;
+
+// ==================== 协议与加密枚举 ====================
+
+enum class DefaultProtocol {
+    None,    // 不指定（TOML 中不输出 default_protocol）
+    Udp,
+    Tcp,
+    Wg,
+    Ws,
+    Wss
+};
+
+enum class EncryptionAlgorithm {
+    AesGcm,           // 默认
+    Xor,
+    Chacha20,
+    AesGcm256,
+    OpensslAes128Gcm,
+    OpensslAes256Gcm,
+    OpensslChacha20
+};
+
+// C++ 风格工具函数：枚举 <-> TOML 字符串
+[[nodiscard]] std::string toTomlString(DefaultProtocol protocol);
+[[nodiscard]] std::optional<DefaultProtocol> defaultProtocolFromToml(std::string_view str);
+[[nodiscard]] std::string toTomlString(EncryptionAlgorithm algorithm);
+[[nodiscard]] std::optional<EncryptionAlgorithm> encryptionAlgorithmFromToml(std::string_view str);
+
+class NetworkConf
+{
+    // 声明 LDETNetwork 为友元，允许其直接访问私有成员
+    friend class LDETNetwork;
+    // 声明全局保存/读取函数为友元
+    friend bool saveAllNetworkConf(const std::vector<NetworkConf>&, QString*);
+    friend std::vector<NetworkConf> readAllNetworkConf();
+
+public:
+    NetworkConf();
+    ~NetworkConf();
+
+    /**
+     * @brief 从 LDETNetwork 的前端 UI 中读取数据并保存到成员变量
+     * @param network LDETNetwork 界面对象指针
+     */
+    void readFromUI(const LDETNetwork* network);
+
+    /**
+     * @brief 从 JSON 对象中读取数据并保存到成员变量
+     * @param json JSON 对象
+     */
+    void readFromJson(const QJsonObject &json);
+
+    /**
+     * @brief 输出为 JSON 对象
+     * @return JSON 对象
+     */
+    [[nodiscard]] QJsonObject toJson() const;
+
+    /**
+     * @brief 输出为 TOML 格式字符串
+     * @return TOML 格式字符串，用于传递给 EasyTier FFI
+     */
+    [[nodiscard]] std::string toToml() const;
+
+    /**
+     * @brief 生成随机的 instanceName
+     * @return 格式为 "LDET-xxxxxxxxxx" 的随机名称
+     */
+    static std::string generateInstanceName();
+
+    // Getter 方法
+    [[nodiscard]] const std::string& getInstanceName() const { return m_instanceName; }
+    void setInstanceName(const std::string &name) { m_instanceName = name; }
+    [[nodiscard]] bool isRunning() const { return m_isRunning; }
+    void setRunning(bool running) { m_isRunning = running; }
+
+private:
+    // ==================== 基础设置 ====================
+    std::string m_hostname;                 ///< 用户名
+    std::string m_networkName;              ///< 网络号
+    std::string m_networkSecret;            ///< 网络密钥
+    bool m_dhcp = true;                     ///< DHCP 开关
+    std::string m_ipv4;                     ///< IPv4 地址
+    bool m_latencyFirst = false;            ///< 低延迟优先开关
+    bool m_privateMode = true;              ///< 私有模式开关
+    std::vector<std::string> m_servers;     ///< 服务器列表
+
+    // ==================== 高级设置 - 功能开关 ====================
+    bool m_enableKcpProxy = true;           ///< 启用 KCP 代理
+    bool m_disableKcpInput = false;         ///< 禁用 KCP 输入
+    bool m_noTun = false;                   ///< 无 TUN 模式
+    bool m_enableQuicProxy = false;         ///< 启用 QUIC 代理
+    bool m_disableQuicInput = false;        ///< 禁用 QUIC 输入
+    bool m_disableRelayKcp = false;              ///< 禁止转发 KCP 数据包
+    bool m_disableRelayQuic = false;             ///< 禁止转发 QUIC 数据包
+    bool m_enableRelayForeignNetworkKcp = false; ///< 允许转发其他网络 KCP 数据包
+    bool m_enableRelayForeignNetworkQuic = false;///< 允许转发其他网络 QUIC 数据包
+    bool m_disableUdpHolePunching = false;  ///< 禁用 UDP 打洞
+    bool m_disableTcpHolePunching = false;  ///< 禁用 TCP 打洞
+    bool m_disableUpnp = false;             ///< 禁用 UPnP/NAT-PMP 端口映射
+    bool m_needP2p = false;                 ///< 需要 P2P 打洞
+    bool m_lazyP2p = false;                 ///< 按需 P2P
+    bool m_p2pOnly = false;                 ///< 仅 P2P 通信
+    bool m_multiThread = true;              ///< 启用多线程
+    bool m_useSmoltcp = false;              ///< 使用 smoltcp 协议栈
+    std::string m_devName;                  ///< TUN 设备名 (dev_name)
+    int m_mtu = 0;                          ///< MTU 值, 0 表示未设置
+    bool m_bindDevice = true;               ///< 仅使用物理网卡
+    bool m_disableP2p = false;              ///< 禁用 P2P
+    bool m_enableExitNode = false;          ///< 启用出口节点
+    bool m_systemForwarding = false;        ///< 系统转发
+    bool m_disableSymHolePunching = false;  ///< 禁用对称 NAT 打洞
+    bool m_disableIpv6 = false;             ///< 禁用 IPv6
+    bool m_relayAllPeerRpc = false;         ///< 转发 RPC 包
+    bool m_enableEncryption = true;         ///< 启用加密
+    bool m_acceptDns = false;               ///< 启用魔法 DNS
+    DefaultProtocol m_defaultProtocol = DefaultProtocol::None;       ///< 默认连接协议
+    EncryptionAlgorithm m_encryptionAlgorithm = EncryptionAlgorithm::AesGcm; ///< 默认加密协议
+
+    // ==================== 高级设置 - 其他 ====================
+    bool m_foreignNetworkWhitelistEnabled = false;  ///< 启用网络白名单
+    std::vector<std::string> m_foreignNetworkWhitelist;  ///< 网络白名单
+    std::vector<std::string> m_listenAddresses;    ///< 监听地址列表
+    std::vector<std::string> m_proxyNetworks;      ///< 子网代理 CIDR 列表
+    std::vector<std::string> m_customRoutes;       ///< 自定义路由规则 (routes)
+    std::vector<std::string> m_exitNodes;          ///< 出口节点列表 (exit_nodes)
+
+    // ==================== 实例标识 ====================
+    std::string m_instanceName;             ///< 实例名称（用于 FFI 管理）
+    std::string m_networkLabel;             ///< 网络标签（用户自定义显示名称）
+
+    // ==================== 运行状态 ====================
+    bool m_isRunning = false;               ///< 网络运行状态
+    QVector<NodeInfo> m_runningStatus;      ///< 运行时节点信息列表
+    QStringList m_runningLog;               ///< 运行时日志列表（最多300条）
+    QString m_lastLogTimestamp;             ///< 上次读取日志时的最新时间戳（原始格式）
+    int m_renderedLogCount = 0;             ///< 已渲染到UI的日志条数（用于增量更新）
+};
+
+/**
+ * @brief 保存所有网络配置到文件
+ *
+ * @param confList 网络配置列表
+ * @param errorMsg 存储保存失败时的错误信息的指针，若成功则为 nullptr
+ *
+ * @return true 成功
+ * @return false 失败
+ */
+bool saveAllNetworkConf(const std::vector<NetworkConf> &confList, QString *errorMsg = nullptr);
+
+/**
+ * @brief 从配置文件中读取所有网络配置信息
+ *
+ * @return 网络配置类的列表
+ */
+std::vector<NetworkConf> readAllNetworkConf();
+
+#endif //QTEASYTIER_NETWORKCONF_H

@@ -1,0 +1,619 @@
+//
+// Created by YMHuang on 2026/4/5.
+//
+
+#include "networkconf.h"
+#include "ldetnetwork.h"
+#include "ldetsettings.h"
+
+#include <sstream>
+#include <unordered_map>
+#include <QListWidget>
+#include <QLineEdit>
+
+// ==================== 枚举工具函数实现 ====================
+
+std::string toTomlString(DefaultProtocol protocol)
+{
+    switch (protocol) {
+        case DefaultProtocol::None: return "";
+        case DefaultProtocol::Udp:  return "udp";
+        case DefaultProtocol::Tcp:  return "tcp";
+        case DefaultProtocol::Wg:   return "wg";
+        case DefaultProtocol::Ws:   return "ws";
+        case DefaultProtocol::Wss:  return "wss";
+    }
+    return "";
+}
+
+std::optional<DefaultProtocol> defaultProtocolFromToml(std::string_view str)
+{
+    static const std::unordered_map<std::string_view, DefaultProtocol> map = {
+        {"",     DefaultProtocol::None},
+        {"udp",  DefaultProtocol::Udp},
+        {"tcp",  DefaultProtocol::Tcp},
+        {"wg",   DefaultProtocol::Wg},
+        {"ws",   DefaultProtocol::Ws},
+        {"wss",  DefaultProtocol::Wss}
+    };
+    auto it = map.find(str);
+    if (it != map.end()) {
+        return it->second;
+    }
+    return std::nullopt;
+}
+
+std::string toTomlString(EncryptionAlgorithm algorithm)
+{
+    switch (algorithm) {
+        case EncryptionAlgorithm::AesGcm:             return "aes-gcm";
+        case EncryptionAlgorithm::Xor:                return "xor";
+        case EncryptionAlgorithm::Chacha20:           return "chacha20";
+        case EncryptionAlgorithm::AesGcm256:          return "aes-gcm-256";
+        case EncryptionAlgorithm::OpensslAes128Gcm:   return "openssl-aes128-gcm";
+        case EncryptionAlgorithm::OpensslAes256Gcm:   return "openssl-aes256-gcm";
+        case EncryptionAlgorithm::OpensslChacha20:    return "openssl-chacha20";
+    }
+    return "aes-gcm";
+}
+
+std::optional<EncryptionAlgorithm> encryptionAlgorithmFromToml(std::string_view str)
+{
+    static const std::unordered_map<std::string_view, EncryptionAlgorithm> map = {
+        {"aes-gcm",             EncryptionAlgorithm::AesGcm},
+        {"xor",                 EncryptionAlgorithm::Xor},
+        {"chacha20",            EncryptionAlgorithm::Chacha20},
+        {"aes-gcm-256",         EncryptionAlgorithm::AesGcm256},
+        {"openssl-aes128-gcm",  EncryptionAlgorithm::OpensslAes128Gcm},
+        {"openssl-aes256-gcm",  EncryptionAlgorithm::OpensslAes256Gcm},
+        {"openssl-chacha20",    EncryptionAlgorithm::OpensslChacha20}
+    };
+    auto it = map.find(str);
+    if (it != map.end()) {
+        return it->second;
+    }
+    return std::nullopt;
+}
+
+// ==================== NetworkConf 类实现 ====================
+
+NetworkConf::NetworkConf()
+{
+    // 初始化实例名称
+    m_instanceName = generateInstanceName();
+}
+
+NetworkConf::~NetworkConf() = default;
+
+void NetworkConf::readFromUI(const LDETNetwork *network)
+{
+    if (!network) {
+        return;
+    }
+
+    // ==================== 基础设置 ====================
+    m_hostname = network->m_hostnameEdit->text().toStdString();
+    m_networkName = network->m_networkNameEdit->text().toStdString();
+    m_networkSecret = network->m_networkSecretEdit->text().toStdString();
+    m_dhcp = network->m_dhcpCheckBox->isChecked();
+    m_ipv4 = network->m_ipv4Edit->text().toStdString();
+    m_latencyFirst = network->m_latencyFirstCheckBox->isChecked();
+    m_privateMode = network->m_privateModeCheckBox->isChecked();
+
+    // 服务器列表
+    m_servers.clear();
+    for (int i = 0; i < network->m_serverListWidget->count(); ++i) {
+        m_servers.push_back(network->m_serverListWidget->item(i)->text().toStdString());
+    }
+
+    // ==================== 高级设置 - 功能开关 ====================
+    m_enableKcpProxy = network->m_enableKcpProxyCheckBox->isChecked();
+    m_disableKcpInput = network->m_disableKcpInputCheckBox->isChecked();
+    m_noTun = network->m_noTunCheckBox->isChecked();
+    m_enableQuicProxy = network->m_enableQuicProxyCheckBox->isChecked();
+    m_disableQuicInput = network->m_disableQuicInputCheckBox->isChecked();
+    m_disableRelayKcp = network->m_disableRelayKcpCheckBox->isChecked();
+    m_disableRelayQuic = network->m_disableRelayQuicCheckBox->isChecked();
+    m_enableRelayForeignNetworkKcp = network->m_enableRelayForeignNetworkKcpCheckBox->isChecked();
+    m_enableRelayForeignNetworkQuic = network->m_enableRelayForeignNetworkQuicCheckBox->isChecked();
+    m_disableUdpHolePunching = network->m_disableUdpHolePunchingCheckBox->isChecked();
+    m_disableTcpHolePunching = network->m_disableTcpHolePunchingCheckBox->isChecked();
+    m_disableUpnp = network->m_disableUpnpCheckBox->isChecked();
+    m_needP2p = network->m_needP2pCheckBox->isChecked();
+    m_lazyP2p = network->m_lazyP2pCheckBox->isChecked();
+    m_p2pOnly = network->m_p2pOnlyCheckBox->isChecked();
+    m_multiThread = network->m_multiThreadCheckBox->isChecked();
+    m_useSmoltcp = network->m_useSmoltcpCheckBox->isChecked();
+    m_bindDevice = network->m_bindDeviceCheckBox->isChecked();
+    m_disableP2p = network->m_disableP2pCheckBox->isChecked();
+    m_enableExitNode = network->m_enableExitNodeCheckBox->isChecked();
+    m_systemForwarding = network->m_systemForwardingCheckBox->isChecked();
+    m_disableSymHolePunching = network->m_disableSymHolePunchingCheckBox->isChecked();
+    m_disableIpv6 = network->m_disableIpv6CheckBox->isChecked();
+    m_relayAllPeerRpc = network->m_relayAllPeerRpcCheckBox->isChecked();
+    m_enableEncryption = network->m_enableEncryptionCheckBox->isChecked();
+    m_acceptDns = network->m_acceptDnsCheckBox->isChecked();
+
+    m_devName = network->m_devNameEdit->text().toStdString();
+    int mtu = network->m_mtuEdit->text().toInt();
+    m_mtu = (mtu >= 1 && mtu <= 1380) ? mtu : 0;
+
+    m_defaultProtocol = static_cast<DefaultProtocol>(network->m_defaultProtocolCombo->currentData().toInt());
+    m_encryptionAlgorithm = static_cast<EncryptionAlgorithm>(network->m_encryptionAlgorithmCombo->currentData().toInt());
+
+    // ==================== 高级设置 - 其他 ====================
+    // 网络白名单
+    m_foreignNetworkWhitelistEnabled = network->m_foreignNetworkWhitelistCheckBox->isChecked();
+    m_foreignNetworkWhitelist.clear();
+    for (int i = 0; i < network->m_whitelistListWidget->count(); ++i) {
+        m_foreignNetworkWhitelist.push_back(network->m_whitelistListWidget->item(i)->text().toStdString());
+    }
+
+    // 监听地址
+    m_listenAddresses.clear();
+    for (int i = 0; i < network->m_listenAddrListWidget->count(); ++i) {
+        m_listenAddresses.push_back(network->m_listenAddrListWidget->item(i)->text().toStdString());
+    }
+
+    // 子网代理 CIDR
+    m_proxyNetworks.clear();
+    for (int i = 0; i < network->m_proxyNetworkListWidget->count(); ++i) {
+        m_proxyNetworks.push_back(network->m_proxyNetworkListWidget->item(i)->text().toStdString());
+    }
+
+    // 自定义路由规则
+    m_customRoutes.clear();
+    for (int i = 0; i < network->m_customRouteListWidget->count(); ++i) {
+        m_customRoutes.push_back(network->m_customRouteListWidget->item(i)->text().toStdString());
+    }
+
+    // 出口节点列表
+    m_exitNodes.clear();
+    for (int i = 0; i < network->m_exitNodeListWidget->count(); ++i) {
+        m_exitNodes.push_back(network->m_exitNodeListWidget->item(i)->text().toStdString());
+    }
+}
+
+void NetworkConf::readFromJson(const QJsonObject &json)
+{
+    // ==================== 实例标识 ====================
+    m_instanceName = json["instance_name"].toString().toStdString();
+    if (m_instanceName.empty()) {
+        m_instanceName = generateInstanceName();
+    }
+    m_networkLabel = json["network_label"].toString().toStdString();
+
+    // ==================== 运行状态 ====================
+    m_isRunning = json["is_running"].toBool(false);
+
+    // ==================== 基础设置 ====================
+    m_hostname = json["hostname"].toString().toStdString();
+    m_networkName = json["network_name"].toString().toStdString();
+    m_networkSecret = json["network_secret"].toString().toStdString();
+    m_dhcp = json["dhcp"].toBool(true);
+    m_ipv4 = json["ipv4"].toString().toStdString();
+    m_latencyFirst = json["latency_first"].toBool(false);
+    m_privateMode = json["private_mode"].toBool(true);
+
+    // 服务器列表
+    m_servers.clear();
+    QJsonArray serversArray = json["servers"].toArray();
+    for (const QJsonValue &value : serversArray) {
+        m_servers.push_back(value.toString().toStdString());
+    }
+
+    // ==================== 高级设置 - 功能开关 ====================
+    m_enableKcpProxy = json["enable_kcp_proxy"].toBool(true);
+    m_disableKcpInput = json["disable_kcp_input"].toBool(false);
+    m_noTun = json["no_tun"].toBool(false);
+    m_enableQuicProxy = json["enable_quic_proxy"].toBool(false);
+    m_disableQuicInput = json["disable_quic_input"].toBool(false);
+    m_disableRelayKcp = json["disable_relay_kcp"].toBool(false);
+    m_disableRelayQuic = json["disable_relay_quic"].toBool(false);
+    m_enableRelayForeignNetworkKcp = json["enable_relay_foreign_network_kcp"].toBool(false);
+    m_enableRelayForeignNetworkQuic = json["enable_relay_foreign_network_quic"].toBool(false);
+    m_disableUdpHolePunching = json["disable_udp_hole_punching"].toBool(false);
+    m_disableTcpHolePunching = json["disable_tcp_hole_punching"].toBool(false);
+    m_disableUpnp = json["disable_upnp"].toBool(false);
+    m_needP2p = json["need_p2p"].toBool(false);
+    m_lazyP2p = json["lazy_p2p"].toBool(false);
+    m_p2pOnly = json["p2p_only"].toBool(false);
+    m_multiThread = json["multi_thread"].toBool(true);
+    m_useSmoltcp = json["use_smoltcp"].toBool(false);
+    m_bindDevice = json["bind_device"].toBool(true);
+    m_disableP2p = json["disable_p2p"].toBool(false);
+    m_enableExitNode = json["enable_exit_node"].toBool(false);
+    m_systemForwarding = json["system_forwarding"].toBool(false);
+    m_disableSymHolePunching = json["disable_sym_hole_punching"].toBool(false);
+    m_disableIpv6 = json["disable_ipv6"].toBool(false);
+    m_relayAllPeerRpc = json["relay_all_peer_rpc"].toBool(false);
+    m_enableEncryption = json["enable_encryption"].toBool(true);
+    m_acceptDns = json["accept_dns"].toBool(false);
+
+    m_devName = json["dev_name"].toString().toStdString();
+    m_mtu = json["mtu"].toInt(0);
+
+    // 默认连接协议
+    if (json.contains("default_protocol")) {
+        std::string protocolStr = json["default_protocol"].toString().toStdString();
+        if (auto p = defaultProtocolFromToml(protocolStr)) {
+            m_defaultProtocol = *p;
+        }
+    }
+    // 默认加密协议
+    if (json.contains("encryption_algorithm")) {
+        std::string algoStr = json["encryption_algorithm"].toString().toStdString();
+        if (auto a = encryptionAlgorithmFromToml(algoStr)) {
+            m_encryptionAlgorithm = *a;
+        }
+    }
+
+    // ==================== 高级设置 - 其他 ====================
+    m_foreignNetworkWhitelistEnabled = json["foreign_network_whitelist_enabled"].toBool(false);
+
+    // 网络白名单
+    m_foreignNetworkWhitelist.clear();
+    QJsonArray whitelistArray = json["foreign_network_whitelist"].toArray();
+    for (const QJsonValue &value : whitelistArray) {
+        m_foreignNetworkWhitelist.push_back(value.toString().toStdString());
+    }
+
+    // 监听地址
+    m_listenAddresses.clear();
+    QJsonArray listenAddrArray = json["listen_addresses"].toArray();
+    for (const QJsonValue &value : listenAddrArray) {
+        m_listenAddresses.push_back(value.toString().toStdString());
+    }
+
+    // 子网代理 CIDR
+    m_proxyNetworks.clear();
+    QJsonArray proxyNetworkArray = json["proxy_networks"].toArray();
+    for (const QJsonValue &value : proxyNetworkArray) {
+        m_proxyNetworks.push_back(value.toString().toStdString());
+    }
+
+    // 自定义路由规则
+    m_customRoutes.clear();
+    QJsonArray customRoutesArray = json["custom_routes"].toArray();
+    for (const QJsonValue &value : customRoutesArray) {
+        m_customRoutes.push_back(value.toString().toStdString());
+    }
+
+    // 出口节点列表
+    m_exitNodes.clear();
+    QJsonArray exitNodesArray = json["exit_nodes"].toArray();
+    for (const QJsonValue &value : exitNodesArray) {
+        m_exitNodes.push_back(value.toString().toStdString());
+    }
+}
+
+QJsonObject NetworkConf::toJson() const
+{
+    QJsonObject json;
+
+    // ==================== 实例标识 ====================
+    json["instance_name"] = QString::fromStdString(m_instanceName);
+    json["network_label"] = QString::fromStdString(m_networkLabel);
+
+    // ==================== 运行状态 ====================
+    json["is_running"] = m_isRunning;
+
+    // ==================== 基础设置 ====================
+    json["hostname"] = QString::fromStdString(m_hostname);
+    json["network_name"] = QString::fromStdString(m_networkName);
+    json["network_secret"] = QString::fromStdString(m_networkSecret);
+    json["dhcp"] = m_dhcp;
+    json["ipv4"] = QString::fromStdString(m_ipv4);
+    json["latency_first"] = m_latencyFirst;
+    json["private_mode"] = m_privateMode;
+
+    // 服务器列表
+    QJsonArray serversArray;
+    for (const auto &server : m_servers) {
+        serversArray.append(QString::fromStdString(server));
+    }
+    json["servers"] = serversArray;
+
+    // ==================== 高级设置 - 功能开关 ====================
+    json["enable_kcp_proxy"] = m_enableKcpProxy;
+    json["disable_kcp_input"] = m_disableKcpInput;
+    json["no_tun"] = m_noTun;
+    json["enable_quic_proxy"] = m_enableQuicProxy;
+    json["disable_quic_input"] = m_disableQuicInput;
+    json["disable_relay_kcp"] = m_disableRelayKcp;
+    json["disable_relay_quic"] = m_disableRelayQuic;
+    json["enable_relay_foreign_network_kcp"] = m_enableRelayForeignNetworkKcp;
+    json["enable_relay_foreign_network_quic"] = m_enableRelayForeignNetworkQuic;
+    json["disable_udp_hole_punching"] = m_disableUdpHolePunching;
+    json["disable_tcp_hole_punching"] = m_disableTcpHolePunching;
+    json["disable_upnp"] = m_disableUpnp;
+    json["need_p2p"] = m_needP2p;
+    json["lazy_p2p"] = m_lazyP2p;
+    json["p2p_only"] = m_p2pOnly;
+    json["multi_thread"] = m_multiThread;
+    json["use_smoltcp"] = m_useSmoltcp;
+    json["bind_device"] = m_bindDevice;
+    json["disable_p2p"] = m_disableP2p;
+    json["enable_exit_node"] = m_enableExitNode;
+    json["system_forwarding"] = m_systemForwarding;
+    json["disable_sym_hole_punching"] = m_disableSymHolePunching;
+    json["disable_ipv6"] = m_disableIpv6;
+    json["relay_all_peer_rpc"] = m_relayAllPeerRpc;
+    json["enable_encryption"] = m_enableEncryption;
+    json["accept_dns"] = m_acceptDns;
+    json["dev_name"] = QString::fromStdString(m_devName);
+    json["mtu"] = m_mtu;
+    json["default_protocol"] = QString::fromStdString(toTomlString(m_defaultProtocol));
+    json["encryption_algorithm"] = QString::fromStdString(toTomlString(m_encryptionAlgorithm));
+
+    // ==================== 高级设置 - 其他 ====================
+    json["foreign_network_whitelist_enabled"] = m_foreignNetworkWhitelistEnabled;
+
+    // 网络白名单
+    QJsonArray whitelistArray;
+    for (const auto &item : m_foreignNetworkWhitelist) {
+        whitelistArray.append(QString::fromStdString(item));
+    }
+    json["foreign_network_whitelist"] = whitelistArray;
+
+    // 监听地址
+    QJsonArray listenAddrArray;
+    for (const auto &addr : m_listenAddresses) {
+        listenAddrArray.append(QString::fromStdString(addr));
+    }
+    json["listen_addresses"] = listenAddrArray;
+
+    // 子网代理 CIDR
+    QJsonArray proxyNetworkArray;
+    for (const auto &cidr : m_proxyNetworks) {
+        proxyNetworkArray.append(QString::fromStdString(cidr));
+    }
+    json["proxy_networks"] = proxyNetworkArray;
+
+    // 自定义路由规则
+    QJsonArray customRoutesArray;
+    for (const auto &route : m_customRoutes) {
+        customRoutesArray.append(QString::fromStdString(route));
+    }
+    json["custom_routes"] = customRoutesArray;
+
+    // 出口节点列表
+    QJsonArray exitNodesArray;
+    for (const auto &node : m_exitNodes) {
+        exitNodesArray.append(QString::fromStdString(node));
+    }
+    json["exit_nodes"] = exitNodesArray;
+
+    return json;
+}
+
+std::string NetworkConf::toToml() const
+{
+    std::ostringstream oss;
+
+    // ==================== 顶层字段 ====================
+    // instance_name 使用网络名称
+    oss << "instance_name = \"" << m_instanceName << "\"\n";
+
+    oss << "hostname = \"" << m_hostname << "\"\n";
+    oss << "dhcp = " << (m_dhcp ? "true" : "false") << "\n";
+    if (!m_ipv4.empty() && !m_dhcp) {
+        oss << "ipv4 = \"" << m_ipv4 << "\"\n";
+    }
+
+    // ==================== listeners 监听地址 ====================
+    if (!m_listenAddresses.empty()) {
+        oss << "\nlisteners = [\n";
+        for (const auto &addr : m_listenAddresses) {
+            oss << "\"" << addr << "\",\n";
+        }
+        oss << "]\n";
+    }
+
+    // ==================== routes 自定义路由规则 ====================
+    if (!m_customRoutes.empty()) {
+        oss << "\nroutes = [\n";
+        for (const auto &route : m_customRoutes) {
+            oss << "\"" << route << "\",\n";
+        }
+        oss << "]\n";
+    }
+
+    // ==================== exit_nodes 出口节点列表 ====================
+    if (!m_exitNodes.empty()) {
+        oss << "\nexit_nodes = [\n";
+        for (const auto &node : m_exitNodes) {
+            oss << "\"" << node << "\",\n";
+        }
+        oss << "]\n";
+    }
+
+    // ==================== [network_identity] 网络身份 ====================
+    oss << "\n[network_identity]\n";
+    oss << "network_name = \"" << m_networkName << "\"\n";
+    oss << "network_secret = \"" << m_networkSecret << "\"\n";
+
+    // ==================== [[peer]] 服务器节点 ====================
+    for (const auto &server : m_servers) {
+        oss << "\n[[peer]]\n";
+        oss << "uri = \"" << server << "\"\n";
+    }
+
+    // ==================== [[proxy_network]] 子网代理 ====================
+    for (const auto &cidr : m_proxyNetworks) {
+        oss << "\n[[proxy_network]]\n";
+        oss << "cidr = \"" << cidr << "\"\n";
+    }
+
+    // ==================== [flags] 功能标志 ====================
+    oss << "\n[flags]\n";
+    oss << "enable_encryption = " << (m_enableEncryption ? "true" : "false") << "\n";
+    oss << "enable_ipv6 = " << (!m_disableIpv6 ? "true" : "false") << "\n";
+    oss << "latency_first = " << (m_latencyFirst ? "true" : "false") << "\n";
+    oss << "enable_exit_node = " << (m_enableExitNode ? "true" : "false") << "\n";
+    oss << "no_tun = " << (m_noTun ? "true" : "false") << "\n";
+    oss << "use_smoltcp = " << (m_useSmoltcp ? "true" : "false") << "\n";
+    if (!m_devName.empty()) {
+        oss << "dev_name = \"" << m_devName << "\"\n";
+    }
+    if (m_mtu > 0) {
+        oss << "mtu = " << m_mtu << "\n";
+    }
+
+    // foreign_network_whitelist: 启用时才输出该字段，多个网络用空格分隔
+    if (m_foreignNetworkWhitelistEnabled) {
+        oss << "foreign_network_whitelist = \"";
+        for (size_t i = 0; i < m_foreignNetworkWhitelist.size(); ++i) {
+            if (i > 0) oss << " ";
+            oss << m_foreignNetworkWhitelist[i];
+        }
+        oss << "\"\n";
+    }
+
+    oss << "enable_quic_proxy = " << (m_enableQuicProxy ? "true" : "false") << "\n";
+    oss << "disable_quic_input = " << (m_disableQuicInput ? "true" : "false") << "\n";
+    oss << "enable_kcp_proxy = " << (m_enableKcpProxy ? "true" : "false") << "\n";
+    oss << "disable_kcp_input = " << (m_disableKcpInput ? "true" : "false") << "\n";
+    oss << "disable_relay_kcp = " << (m_disableRelayKcp ? "true" : "false") << "\n";
+    oss << "disable_relay_quic = " << (m_disableRelayQuic ? "true" : "false") << "\n";
+    oss << "enable_relay_foreign_network_kcp = " << (m_enableRelayForeignNetworkKcp ? "true" : "false") << "\n";
+    oss << "enable_relay_foreign_network_quic = " << (m_enableRelayForeignNetworkQuic ? "true" : "false") << "\n";
+    oss << "bind_device = " << (m_bindDevice ? "true" : "false") << "\n";
+    oss << "private_mode = " << (m_privateMode ? "true" : "false") << "\n";
+    oss << "disable_p2p = " << (m_disableP2p ? "true" : "false") << "\n";
+    oss << "need_p2p = " << (m_needP2p ? "true" : "false") << "\n";
+    oss << "lazy_p2p = " << (m_lazyP2p ? "true" : "false") << "\n";
+    oss << "p2p_only = " << (m_p2pOnly ? "true" : "false") << "\n";
+    oss << "multi_thread = " << (m_multiThread ? "true" : "false") << "\n";
+    oss << "accept_dns = " << (m_acceptDns ? "true" : "false") << "\n";
+    oss << "disable_sym_hole_punching = " << (m_disableSymHolePunching ? "true" : "false") << "\n";
+    oss << "relay_all_peer_rpc = " << (m_relayAllPeerRpc ? "true" : "false") << "\n";
+    oss << "disable_udp_hole_punching = " << (m_disableUdpHolePunching ? "true" : "false") << "\n";
+    oss << "disable_tcp_hole_punching = " << (m_disableTcpHolePunching ? "true" : "false") << "\n";
+    oss << "disable_upnp = " << (m_disableUpnp ? "true" : "false") << "\n";
+    oss << "proxy_forward_by_system = " << (m_systemForwarding ? "true" : "false") << "\n";
+
+    if (m_defaultProtocol != DefaultProtocol::None) {
+        oss << "default_protocol = \"" << toTomlString(m_defaultProtocol) << "\"\n";
+    }
+    oss << "encryption_algorithm = \"" << toTomlString(m_encryptionAlgorithm) << "\"\n";
+
+    return oss.str();
+}
+
+std::string NetworkConf::generateInstanceName()
+{
+    static const char charset[] = "0123456789abcdefghijklmnopqrstuvwxyz";
+    static constexpr size_t charsetSize = sizeof(charset) - 1;
+    static constexpr size_t nameLength = 10;
+    static constexpr const char *prefix = "LDET-";
+
+    std::random_device rd;
+    std::mt19937 generator(rd());
+    std::uniform_int_distribution<size_t> distribution(0, charsetSize - 1);
+
+    std::string result = prefix;
+    result.reserve(strlen(prefix) + nameLength);
+
+    for (size_t i = 0; i < nameLength; ++i) {
+        result += charset[distribution(generator)];
+    }
+
+    return result;
+}
+
+// ==================== 全局函数实现 ====================
+
+bool saveAllNetworkConf(const std::vector<NetworkConf> &confList, QString *errorMsg)
+{
+    // 获取配置文件路径
+    QString configPath = LDETSettings::getConfigPath();
+    QDir dir(configPath);
+
+    // 确保目录存在
+    if (!dir.exists()) {
+        if (!dir.mkpath(".")) {
+            if (errorMsg) {
+                *errorMsg = QObject::tr("无法创建配置目录: %1").arg(configPath);
+            }
+            return false;
+        }
+    }
+
+    // 构建完整的 JSON 文档
+    QJsonArray jsonArray;
+    for (const NetworkConf &conf : confList) {
+        jsonArray.append(conf.toJson());
+    }
+
+    QJsonDocument doc(jsonArray);
+
+    // 写入文件
+    QString filePath = configPath + "/network2.json";
+    QFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        if (errorMsg) {
+            *errorMsg = QObject::tr("无法打开配置文件: %1").arg(filePath);
+        }
+        return false;
+    }
+
+    qint64 bytesWritten = file.write(doc.toJson(QJsonDocument::Indented));
+    file.close();
+
+    if (bytesWritten == -1) {
+        if (errorMsg) {
+            *errorMsg = QObject::tr("写入配置文件失败: %1").arg(filePath);
+        }
+        return false;
+    }
+
+    return true;
+}
+
+std::vector<NetworkConf> readAllNetworkConf()
+{
+    std::vector<NetworkConf> confList;
+
+    // 获取配置文件路径
+    QString configPath = LDETSettings::getConfigPath();
+    QString filePath = configPath + "/network2.json";
+
+    QFile file(filePath);
+    if (!file.exists()) {
+        // 文件不存在，返回空列表
+        return confList;
+    }
+
+    if (!file.open(QIODevice::ReadOnly)) {
+        // 无法打开文件，返回空列表
+        return confList;
+    }
+
+    QByteArray jsonData = file.readAll();
+    file.close();
+
+    QJsonParseError parseError;
+    QJsonDocument doc = QJsonDocument::fromJson(jsonData, &parseError);
+
+    if (parseError.error != QJsonParseError::NoError) {
+        // JSON 解析错误，返回空列表
+        return confList;
+    }
+
+    if (!doc.isArray()) {
+        // 不是数组格式，返回空列表
+        return confList;
+    }
+
+    QJsonArray jsonArray = doc.array();
+    for (const QJsonValue &value : jsonArray) {
+        if (value.isObject()) {
+            NetworkConf conf;
+            conf.readFromJson(value.toObject());
+            confList.push_back(conf);
+        }
+    }
+
+    return confList;
+}
