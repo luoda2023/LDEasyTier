@@ -150,7 +150,8 @@ target_compile_definitions(${ProjectName} PRIVATE
 target_link_libraries(${ProjectName} PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::Svg)
 
 # 链接EasyTier Ffi 库
-target_link_libraries(${ProjectName} PRIVATE easytier_ffi)
+# 使用完整路径，避免 MinGW 在 link_directories 下找不到 .dll.lib
+target_link_libraries(${ProjectName} PRIVATE "${CMAKE_SOURCE_DIR}/ThirdParty/EasyTier/library/easytier_ffi.dll.lib")
 
 if(APPLE)
     # 统一使用@rpath查找FFI动态库，避免构建机绝对路径被写入二进制
@@ -363,7 +364,6 @@ elseif(APPLE)
             COMMAND \"${MACDEPLOYQT_EXECUTABLE}\"
                 \"\${CMAKE_INSTALL_PREFIX}/${ProjectName}.app\"
                 \"-executable=\${cidr_executable}\"
-                -no-codesign
             WORKING_DIRECTORY \"\${CMAKE_INSTALL_PREFIX}\"
             RESULT_VARIABLE deploy_result
         )
