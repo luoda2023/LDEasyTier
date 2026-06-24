@@ -2,8 +2,8 @@
 // Created by YMHuang on 2026/4/5.
 //
 
-#ifndef QTEASYTIER_NETWORKCONF_H
-#define QTEASYTIER_NETWORKCONF_H
+#ifndef LDEASYTIER_NETWORKCONF_H
+#define LDEASYTIER_NETWORKCONF_H
 
 #include <string>
 #include <string_view>
@@ -177,4 +177,4 @@ bool saveAllNetworkConf(const std::vector<NetworkConf> &confList, QString *error
  */
 std::vector<NetworkConf> readAllNetworkConf();
 
-#endif //QTEASYTIER_NETWORKCONF_H
+#endif // LDEASYTIER_NETWORKCONF_H

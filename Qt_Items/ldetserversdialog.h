@@ -1,5 +1,5 @@
-#ifndef QTEASYTIER_QTETSERVERSDIALOG_H
-#define QTEASYTIER_QTETSERVERSDIALOG_H
+#ifndef LDEASYTIER_LDETSERVERSDIALOG_H
+#define LDEASYTIER_LDETSERVERSDIALOG_H
 
 #include <QDialog>
 #include <QVBoxLayout>
@@ -87,4 +87,4 @@ private slots:
     void onDeselectAll();
 };
 
-#endif // QTEASYTIER_QTETSERVERSDIALOG_H
+#endif // LDEASYTIER_LDETSERVERSDIALOG_H

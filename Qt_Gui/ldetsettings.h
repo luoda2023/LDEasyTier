@@ -2,8 +2,8 @@
 // Created by YMHuang on 2026/4/7.
 //
 
-#ifndef QTEASYTIER_QTETSETTINGS_H
-#define QTEASYTIER_QTETSETTINGS_H
+#ifndef LDEASYTIER_LDETSETTINGS_H
+#define LDEASYTIER_LDETSETTINGS_H
 
 // ========== 版本相关宏定义 ==========
 /// @brief EasyTier FFI 库版本号
@@ -159,4 +159,4 @@ private:
     bool m_lastSavedAutoStart = false;
 };
 
-#endif //QTEASYTIER_QTETSETTINGS_H
+#endif // LDEASYTIER_LDETSETTINGS_H

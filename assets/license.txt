@@ -70,8 +70,8 @@ Breeze Style：KDE Plasma 主题样式
 11. 联系方式
 如有疑问，请联系作者：
 
-作者邮箱：myqfeng@outlook.com
-项目地址：https://gitee.com/myqfeng/qt-easy-tier
+作者邮箱：luoda2023@users.noreply.github.com
+项目地址：https://github.com/luoda2023/LDEasyTier
 
 本许可协议最后更新日期：2026年2月17日
 
@@ -146,8 +146,8 @@ LDEasyTier 是一款网络工具类软件，不以吸引或面向儿童为设计
 9. 联系我们
 如果您对本隐私政策或 LDEasyTier 的数据处理方式有任何疑问或建议，请通过以下方式联系我们：
 
-邮箱： myqfeng@outlook.com
-项目地址： https://gitee.com/ViagraHuang/LDEasyTier
+邮箱： luoda2023@users.noreply.github.com
+项目地址： https://github.com/luoda2023/LDEasyTier
 我们将在收到您的反馈后尽快回复。
 
 

@@ -528,7 +528,7 @@ QString LDETSettings::loadLastPage()
 
 void LDETSettings::checkForUpdate(QWidget *parent, bool silent)
 {
-    const QUrl url("https://gitee.com/api/v5/repos/myqfeng/qt-easy-tier/releases/latest");
+    const QUrl url("https://github.com/luoda2023/LDEasyTier/releases/latest");
 
     // 创建网络管理器
     auto *networkManager = new QNetworkAccessManager(parent);
@@ -569,7 +569,7 @@ void LDETSettings::checkForUpdate(QWidget *parent, bool silent)
                     parent, tr("检查更新"), msg, QMessageBox::Yes | QMessageBox::No);
 
                 if (ret == QMessageBox::Yes) {
-                    QDesktopServices::openUrl(QUrl("https://gitee.com/myqfeng/qt-easy-tier/releases"));
+                    QDesktopServices::openUrl(QUrl("https://github.com/luoda2023/LDEasyTier/releases"));
                 }
             } else if (!silent) {
                 QMessageBox::information(parent, tr("检查更新"), tr("当前已是最新版本！"));

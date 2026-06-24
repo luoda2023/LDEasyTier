@@ -50,7 +50,7 @@ LDETMain::LDETMain(QWidget *parent)
     });
     connect(ui->gitBtn, &QPushButton::clicked, this, [=, this]()
     {
-        QDesktopServices::openUrl(QUrl("https://gitee.com/myqfeng/qt-easy-tier"));
+        QDesktopServices::openUrl(QUrl("https://github.com/luoda2023/LDEasyTier"));
     });
     connect(ui->helpBtn, &QPushButton::clicked, this, [=, this]()
     {

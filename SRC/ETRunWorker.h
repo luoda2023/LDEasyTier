@@ -2,8 +2,8 @@
 // Created by YMHuang on 2026/4/5.
 //
 
-#ifndef QTEASYTIER_ETRUNWORKER_H
-#define QTEASYTIER_ETRUNWORKER_H
+#ifndef LDEASYTIER_ETRUNWORKER_H
+#define LDEASYTIER_ETRUNWORKER_H
 
 #include "easytier_ffi.h"
 #include <QObject>
@@ -191,4 +191,4 @@ private:
 Q_DECLARE_METATYPE(EasyTierFFI::KVPair)
 Q_DECLARE_METATYPE(std::vector<EasyTierFFI::KVPair>)
 
-#endif //QTEASYTIER_ETRUNWORKER_H
+#endif // LDEASYTIER_ETRUNWORKER_H
