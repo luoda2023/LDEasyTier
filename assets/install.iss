@@ -3,7 +3,7 @@
 ; Non-commercial use only
 
 #define MyAppName "LDEasyTier"
-#define MyAppVersion "2.1.0"
+#define MyAppVersion "2.1.2"
 #define MyAppPublisher "LUODA"
 #define MyAppURL "https://github.com/luoda2023/LDEasyTier"
 #define MyAppExeName "LDEasyTier.exe"
