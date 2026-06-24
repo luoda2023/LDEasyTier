@@ -58,6 +58,11 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "{#ProjectDir}\Install\bin\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ProjectDir}\Install\bin\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; EasyTier runtime dependencies
+Source: "{#ProjectDir}\ThirdParty\EasyTier\share\windows\easytier_ffi.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#ProjectDir}\ThirdParty\EasyTier\share\windows\wintun.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#ProjectDir}\ThirdParty\EasyTier\share\windows\Packet.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#ProjectDir}\ThirdParty\EasyTier\share\windows\WinDivert64.sys"; DestDir: "{app}"; Flags: ignoreversion
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
 [Registry]
