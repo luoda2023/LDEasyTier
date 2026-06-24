@@ -357,7 +357,7 @@ void LDETMain::initHelloPage()
     mainLayout->addLayout(buttonGrid);
 
     // 版权信息
-    QLabel *copyrightLabel = new QLabel("Copyright © 2026 明月清风. All rights reserved.", this);
+    QLabel *copyrightLabel = new QLabel("Copyright © 2026 LUODA. All rights reserved.", this);
     QFont copyrightFont;
     copyrightFont.setPointSize(10);
     copyrightLabel->setFont(copyrightFont);

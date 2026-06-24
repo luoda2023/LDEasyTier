@@ -90,7 +90,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 # macOS设置程序属性
 if(APPLE)
-    set(MACOS_APP_ICON "${CMAKE_SOURCE_DIR}/assets/qtet.icns")
+    set(MACOS_APP_ICON "${CMAKE_SOURCE_DIR}/assets/ldet.icns")
     set(MACOS_INFO_PLIST "${CMAKE_SOURCE_DIR}/assets/Info.plist")
 endif()
 
