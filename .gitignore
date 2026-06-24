@@ -73,6 +73,12 @@ CMakeLists.txt.user*
 *.dll
 *.exe
 
+# EasyTier runtime binaries
+!ThirdParty/EasyTier/share/windows/*.dll
+!ThirdParty/EasyTier/share/windows/*.sys
+!ThirdParty/EasyTier/library/*.lib
+!ThirdParty/EasyTier/library/*.dll.lib
+
 # Directories with generated files
 .moc/
 .obj/
