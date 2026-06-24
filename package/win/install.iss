@@ -49,6 +49,7 @@ SolidCompression=yes
 WizardStyle=modern dynamic windows11
 
 [Languages]
+Name: "chinesesimplified"; MessagesFile: "compiler:Default.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
